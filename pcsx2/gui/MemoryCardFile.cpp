@@ -295,6 +295,10 @@ bool FileMemoryCard::IsPSX( uint slot )
 
 s32 FileMemoryCard::Read( uint slot, u8 *dest, u32 adr, int size )
 {
+	const u32 cluster = adr / 0x420u;
+	const u32 offset = adr % 0x420u;
+	Console.WriteLn(L"(FileMcd) Slot %u, reading %03d bytes at %08x / cluster %05u, offset %03x", slot, size, adr, cluster, offset);
+
 	wxFFile& mcfp( m_file[slot] );
 	if( !mcfp.IsOpened() )
 	{
@@ -315,6 +319,10 @@ s32 FileMemoryCard::Save( uint slot, const u8 *src, u32 adr, int size )
 		DevCon.Error( "(FileMcd) Ignoring attempted save/write to disabled slot." );
 		return 1;
 	}
+
+	const u32 cluster = adr / 0x420u;
+	const u32 offset = adr % 0x420u;
+	Console.WriteLn(L"(FileMcd) Slot %u, reading %03d bytes at %08x / cluster %05u, offset %03x", slot, size, adr, cluster, offset);
 
 	if(m_ispsx[slot])
 	{
@@ -361,6 +369,10 @@ s32 FileMemoryCard::EraseBlock( uint slot, u32 adr )
 		DevCon.Error( "MemoryCard: Ignoring erase for disabled slot." );
 		return 1;
 	}
+
+	const u32 cluster = adr / 0x420u;
+	const u32 offset = adr % 0x420u;
+	Console.WriteLn(L"(FileMcd) Slot %u, erasing block bytes at %08x / cluster %05u, offset %03x", slot, adr, cluster, offset);
 
 	if( !Seek(mcfp, adr) ) return 0;
 	return mcfp.Write( m_effeffs, sizeof(m_effeffs) ) != 0;

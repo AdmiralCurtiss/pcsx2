@@ -954,7 +954,7 @@ void ConsoleLogFrame::DoFlushQueue()
 	// fixme - 512k runs well on win32 but appears to be very sluggish on linux (but that could
 	// be a result of my using Xming + CoLinux).  Might need platform dependent defaults here. --air
 
-	static const int BufferSize = 0x80000;
+	static const int BufferSize = 0x8000000;
 	if( (insertPoint + m_CurQueuePos) > BufferSize )
 	{
 		int toKeep = BufferSize - m_CurQueuePos;

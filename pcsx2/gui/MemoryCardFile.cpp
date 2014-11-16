@@ -38,6 +38,7 @@ static const int MCD_SIZE	= 1024 *  8  * 16;		// Legacy PSX card default size
 static const int MC2_MBSIZE	= 1024 * 528 * 2;		// Size of a single megabyte of card data
 static const int MC2_SIZE	= MC2_MBSIZE * 8;		// PS2 card default size (8MB)
 
+#pragma pack(push, 1)
 // --------------------------------------------------------------------------------------
 //  Currently Unused Superblock Header Struct
 // --------------------------------------------------------------------------------------
@@ -56,11 +57,13 @@ struct superblock
 	u32 rootdir_cluster;		// 0x3c
 	u32 backup_block1;			// 0x40
 	u32 backup_block2;			// 0x44
+	u64 padding0x48;			// 0x48
 	u32 ifc_list[32]; 			// 0x50
 	u32 bad_block_list[32]; 	// 0xd0
 	u8 card_type; 				// 0x150
 	u8 card_flags; 				// 0x151
 };
+#pragma pack(pop)
 
 // --------------------------------------------------------------------------------------
 //  FileMemoryCard
@@ -440,6 +443,11 @@ u64 FileMemoryCard::GetCRC( uint slot )
 class FolderMemoryCard
 {
 protected:
+	wxDirName folderName;
+
+	superblock superBlock;
+	uint slot;
+	bool formatted = false;
 
 public:
 	FolderMemoryCard();
@@ -459,9 +467,9 @@ public:
 	s32  EraseBlock(u32 adr);
 	u64  GetCRC();
 
-protected:
-	bool Create(const wxString& mcdFile, uint sizeInMB);
+	void SetSlot(uint slot);
 
+protected:
 	wxString GetDisabledMessage(uint slot) const
 	{
 		return wxsFormat(pxE(L"The PS2-slot %d has been automatically disabled.  You can correct the problem\nand re-enable it at any time using Config:Memory cards from the main menu."
@@ -472,28 +480,59 @@ protected:
 
 FolderMemoryCard::FolderMemoryCard()
 {
+	memset( &superBlock, 0xFF, sizeof(superBlock) );
 }
 
 void FolderMemoryCard::Open()
 {
+	wxFileName configuredFileName( g_Conf->FullpathToMcd(slot) );
+	configuredFileName.ClearExt();
+	folderName = wxDirName( configuredFileName.GetFullPath() );
+	wxString str( configuredFileName.GetFullPath() );
+	bool disabled = false;
+
+	if ( g_Conf->Mcd[slot].Enabled ) {
+		if ( configuredFileName.GetFullName().IsEmpty() ) {
+			str = L"[empty filename]";
+			disabled = true;
+		}
+		if ( !disabled && configuredFileName.FileExists() ) {
+			str = L"[is file, should be folder]";
+			disabled = true;
+		}
+		
+		// if nothing exists at a valid location, create a directory for the memory card
+		if ( !disabled && !folderName.Exists() ) {
+			if ( !folderName.Mkdir() ) {
+				str = L"[couldn't create folder]";
+				disabled = true;
+			}
+		}
+	} else {
+		str = L"[disabled]";
+		disabled = true;
+	}
+
+	Console.WriteLn( disabled ? Color_Gray : Color_Green, L"McdSlot %u: " + str, slot );
+	if ( disabled ) return;
+
+	// read superblock if it exists
+	wxFileName superBlockFileName( str, L"_superblock" );
+	if ( superBlockFileName.FileExists() ) {
+		wxFFile superBlockFile( superBlockFileName.GetFullPath().c_str() );
+		if ( superBlockFile.Read( &superBlock, sizeof(superBlock) ) == sizeof(superBlock) ) {
+			formatted = true;
+		}
+	}
 }
 
 void FolderMemoryCard::Close()
 {
 }
 
-// returns FALSE if an error occurred (either permission denied or disk full)
-bool FolderMemoryCard::Create(const wxString& mcdFile, uint sizeInMB)
-{
-	// TODO: Implement
-	Console.WriteLn(L"(FolderMcd) Creating new %uMB memory card: " + mcdFile, sizeInMB);
-	return true;
-}
-
 s32 FolderMemoryCard::IsPresent()
 {
-	// TODO: Implement
-	return false;
+	return folderName.Exists();
 }
 
 void FolderMemoryCard::GetSizeInfo(PS2E_McdSizeInfo& outways)
@@ -559,6 +598,12 @@ u64 FolderMemoryCard::GetCRC()
 	return retval;
 }
 
+void FolderMemoryCard::SetSlot(uint slot)
+{
+	pxAssert( slot < 8 );
+	this->slot = slot;
+}
+
 // --------------------------------------------------------------------------------------
 //  FolderMemoryCardAggregator
 // --------------------------------------------------------------------------------------
@@ -587,6 +632,9 @@ public:
 
 FolderMemoryCardAggregator::FolderMemoryCardAggregator()
 {
+	for ( uint i = 0; i < totalCardSlots; ++i ) {
+		m_cards[i].SetSlot( i );
+	}
 }
 
 void FolderMemoryCardAggregator::Open()
@@ -645,7 +693,8 @@ u64 FolderMemoryCardAggregator::GetCRC(uint slot)
 struct Component_FileMcd
 {
 	PS2E_ComponentAPI_Mcd	api;	// callbacks the plugin provides back to the emulator
-	FileMemoryCard			impl;	// class-based implementations we refer to when API is invoked
+	//FileMemoryCard			impl;	// class-based implementations we refer to when API is invoked
+	FolderMemoryCardAggregator impl;
 
 	Component_FileMcd();
 };

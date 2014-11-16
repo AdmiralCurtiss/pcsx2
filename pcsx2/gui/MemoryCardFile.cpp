@@ -39,6 +39,30 @@ static const int MC2_MBSIZE	= 1024 * 528 * 2;		// Size of a single megabyte of c
 static const int MC2_SIZE	= MC2_MBSIZE * 8;		// PS2 card default size (8MB)
 
 // --------------------------------------------------------------------------------------
+//  Currently Unused Superblock Header Struct
+// --------------------------------------------------------------------------------------
+// (provided for reference purposes)
+struct superblock
+{
+	char magic[28]; 			// 0x00
+	char version[12]; 			// 0x1c
+	u16 page_len; 				// 0x28
+	u16 pages_per_cluster;	 	// 0x2a
+	u16 pages_per_block;		// 0x2c
+	u16 unused; 				// 0x2e
+	u32 clusters_per_card;	 	// 0x30
+	u32 alloc_offset; 			// 0x34
+	u32 alloc_end; 				// 0x38
+	u32 rootdir_cluster;		// 0x3c
+	u32 backup_block1;			// 0x40
+	u32 backup_block2;			// 0x44
+	u32 ifc_list[32]; 			// 0x50
+	u32 bad_block_list[32]; 	// 0xd0
+	u8 card_type; 				// 0x150
+	u8 card_flags; 				// 0x151
+};
+
+// --------------------------------------------------------------------------------------
 //  FileMemoryCard
 // --------------------------------------------------------------------------------------
 // Provides thread-safe direct file IO mapping.
@@ -410,6 +434,211 @@ u64 FileMemoryCard::GetCRC( uint slot )
 }
 
 // --------------------------------------------------------------------------------------
+//  FolderMemoryCard
+// --------------------------------------------------------------------------------------
+// Fakes a memory card using a regular folder/file structure in the host file system
+class FolderMemoryCard
+{
+protected:
+
+public:
+	FolderMemoryCard();
+	virtual ~FolderMemoryCard() throw() {}
+
+	void Lock();
+	void Unlock();
+
+	void Open();
+	void Close();
+
+	s32  IsPresent();
+	void GetSizeInfo(PS2E_McdSizeInfo& outways);
+	bool IsPSX();
+	s32  Read(u8 *dest, u32 adr, int size);
+	s32  Save(const u8 *src, u32 adr, int size);
+	s32  EraseBlock(u32 adr);
+	u64  GetCRC();
+
+protected:
+	bool Create(const wxString& mcdFile, uint sizeInMB);
+
+	wxString GetDisabledMessage(uint slot) const
+	{
+		return wxsFormat(pxE(L"The PS2-slot %d has been automatically disabled.  You can correct the problem\nand re-enable it at any time using Config:Memory cards from the main menu."
+			), slot//TODO: translate internal slot index to human-readable slot description
+			);
+	}
+};
+
+FolderMemoryCard::FolderMemoryCard()
+{
+}
+
+void FolderMemoryCard::Open()
+{
+}
+
+void FolderMemoryCard::Close()
+{
+}
+
+// returns FALSE if an error occurred (either permission denied or disk full)
+bool FolderMemoryCard::Create(const wxString& mcdFile, uint sizeInMB)
+{
+	// TODO: Implement
+	Console.WriteLn(L"(FolderMcd) Creating new %uMB memory card: " + mcdFile, sizeInMB);
+	return true;
+}
+
+s32 FolderMemoryCard::IsPresent()
+{
+	// TODO: Implement
+	return false;
+}
+
+void FolderMemoryCard::GetSizeInfo(PS2E_McdSizeInfo& outways)
+{
+	// TODO: Implement
+
+	outways.SectorSize = 512; // 0x0200
+	outways.EraseBlockSizeInSectors = 16;  // 0x0010
+	outways.Xor = 18;  // 0x12, XOR 02 00 00 10
+
+	//if (pxAssert(m_file[slot].IsOpened()))
+	//	outways.McdSizeInSectors = m_file[slot].Length() / (outways.SectorSize + outways.EraseBlockSizeInSectors);
+	//else
+	outways.McdSizeInSectors = 0x4000;
+
+	u8 *pdata = (u8*)&outways.McdSizeInSectors;
+	outways.Xor ^= pdata[0] ^ pdata[1] ^ pdata[2] ^ pdata[3];
+}
+
+bool FolderMemoryCard::IsPSX()
+{
+	// TODO: Implement
+	return false;
+}
+
+s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
+{
+	// TODO: Implement
+	const u32 cluster = adr / 0x420u;
+	const u32 offset = adr % 0x420u;
+	Console.WriteLn(L"(FolderMcd) reading %03d bytes at %08x / cluster %05u, offset %03x", size, adr, cluster, offset);
+
+	// return 0 on fail, 1 on success?
+	return 0;
+}
+
+s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
+{
+	// TODO: Implement
+	const u32 cluster = adr / 0x420u;
+	const u32 offset = adr % 0x420u;
+	Console.WriteLn(L"(FolderMcd) reading %03d bytes at %08x / cluster %05u, offset %03x", size, adr, cluster, offset);
+
+	// return 0 on fail, 1 on success?
+	return 0;
+}
+
+s32 FolderMemoryCard::EraseBlock(u32 adr)
+{
+	// TODO: Implement
+	const u32 cluster = adr / 0x420u;
+	const u32 offset = adr % 0x420u;
+	Console.WriteLn(L"(FolderMcd) erasing block bytes at %08x / cluster %05u, offset %03x", adr, cluster, offset);
+
+	// return 0 on fail, 1 on success?
+	return 0;
+}
+
+u64 FolderMemoryCard::GetCRC()
+{
+	// TODO: Implement
+	u64 retval = 0;
+	return retval;
+}
+
+// --------------------------------------------------------------------------------------
+//  FolderMemoryCardAggregator
+// --------------------------------------------------------------------------------------
+// Forwards the API's requests for specific memory card slots to the correct FolderMemoryCard.
+class FolderMemoryCardAggregator
+{
+protected:
+	static const int totalCardSlots = 8;
+	FolderMemoryCard m_cards[totalCardSlots];
+
+public:
+	FolderMemoryCardAggregator();
+	virtual ~FolderMemoryCardAggregator() throw() {}
+
+	void Open();
+	void Close();
+
+	s32  IsPresent(uint slot);
+	void GetSizeInfo(uint slot, PS2E_McdSizeInfo& outways);
+	bool IsPSX(uint slot);
+	s32  Read(uint slot, u8 *dest, u32 adr, int size);
+	s32  Save(uint slot, const u8 *src, u32 adr, int size);
+	s32  EraseBlock(uint slot, u32 adr);
+	u64  GetCRC(uint slot);
+};
+
+FolderMemoryCardAggregator::FolderMemoryCardAggregator()
+{
+}
+
+void FolderMemoryCardAggregator::Open()
+{
+	for (int i = 0; i < totalCardSlots; ++i) {
+		m_cards[i].Open();
+	}
+}
+
+void FolderMemoryCardAggregator::Close()
+{
+	for (int i = 0; i < totalCardSlots; ++i) {
+		m_cards[i].Close();
+	}
+}
+
+s32 FolderMemoryCardAggregator::IsPresent(uint slot)
+{
+	return m_cards[slot].IsPresent();
+}
+
+void FolderMemoryCardAggregator::GetSizeInfo(uint slot, PS2E_McdSizeInfo& outways)
+{
+	m_cards[slot].GetSizeInfo(outways);
+}
+
+bool FolderMemoryCardAggregator::IsPSX(uint slot)
+{
+	return m_cards[slot].IsPSX();
+}
+
+s32 FolderMemoryCardAggregator::Read(uint slot, u8 *dest, u32 adr, int size)
+{
+	return m_cards[slot].Read(dest, adr, size);
+}
+
+s32 FolderMemoryCardAggregator::Save(uint slot, const u8 *src, u32 adr, int size)
+{
+	return m_cards[slot].Save(src, adr, size);
+}
+
+s32 FolderMemoryCardAggregator::EraseBlock(uint slot, u32 adr)
+{
+	return m_cards[slot].EraseBlock(adr);
+}
+
+u64 FolderMemoryCardAggregator::GetCRC(uint slot)
+{
+	return m_cards[slot].GetCRC();
+}
+
+// --------------------------------------------------------------------------------------
 //  MemoryCard Component API Bindings
 // --------------------------------------------------------------------------------------
 
@@ -559,32 +788,6 @@ extern "C" const PS2E_LibraryAPI* FileMcd_InitAPI( const PS2E_EmulatorInfo* emui
 	return &FileMcd_Library;
 }
 
-// --------------------------------------------------------------------------------------
-//  Currently Unused Superblock Header Struct
-// --------------------------------------------------------------------------------------
-// (provided for reference purposes)
-
-struct superblock
-{
-	char magic[28]; 			// 0x00
-	char version[12]; 			// 0x1c
-	u16 page_len; 				// 0x28
-	u16 pages_per_cluster;	 	// 0x2a
-	u16 pages_per_block;		// 0x2c
-	u16 unused; 				// 0x2e
-	u32 clusters_per_card;	 	// 0x30
-	u32 alloc_offset; 			// 0x34
-	u32 alloc_end; 				// 0x38
-	u32 rootdir_cluster;		// 0x3c
-	u32 backup_block1;			// 0x40
-	u32 backup_block2;			// 0x44
-	u32 ifc_list[32]; 			// 0x50
-	u32 bad_block_list[32]; 	// 0xd0
-	u8 card_type; 				// 0x150
-	u8 card_flags; 				// 0x151
-};
-
-
 //Tests if a string is a valid name for a new file within a specified directory.
 //returns true if:
 //     - the file name has a minimum length of minNumCharacters chars (default is 5 chars: at least 1 char + '.' + 3-chars extension)
@@ -621,130 +824,4 @@ bool isValidNewFilename( wxString filenameStringToTest, wxDirName atBasePath, wx
 
 	out_errorMessage = L"[OK - New file name is valid]";  //shouldn't be displayed on success, hence not translatable.
 	return true;
-}
-
-// --------------------------------------------------------------------------------------
-//  FolderMemoryCard
-// --------------------------------------------------------------------------------------
-// Fakes a memory card using a regular folder/file structure in the host file system
-class FolderMemoryCard
-{
-protected:
-
-public:
-	FolderMemoryCard();
-	virtual ~FolderMemoryCard() throw() {}
-
-	void Lock();
-	void Unlock();
-
-	void Open();
-	void Close();
-
-	s32  IsPresent(uint slot);
-	void GetSizeInfo(uint slot, PS2E_McdSizeInfo& outways);
-	bool IsPSX(uint slot);
-	s32  Read(uint slot, u8 *dest, u32 adr, int size);
-	s32  Save(uint slot, const u8 *src, u32 adr, int size);
-	s32  EraseBlock(uint slot, u32 adr);
-	u64  GetCRC(uint slot);
-
-protected:
-	bool Create(const wxString& mcdFile, uint sizeInMB);
-
-	wxString GetDisabledMessage(uint slot) const
-	{
-		return wxsFormat(pxE(L"The PS2-slot %d has been automatically disabled.  You can correct the problem\nand re-enable it at any time using Config:Memory cards from the main menu."
-			), slot//TODO: translate internal slot index to human-readable slot description
-			);
-	}
-};
-
-FolderMemoryCard::FolderMemoryCard()
-{
-}
-
-void FolderMemoryCard::Open()
-{
-}
-
-void FolderMemoryCard::Close()
-{
-}
-
-// returns FALSE if an error occurred (either permission denied or disk full)
-bool FolderMemoryCard::Create(const wxString& mcdFile, uint sizeInMB)
-{
-	// TODO: Implement
-	Console.WriteLn(L"(FolderMcd) Creating new %uMB memory card: " + mcdFile, sizeInMB);
-	return true;
-}
-
-s32 FolderMemoryCard::IsPresent(uint slot)
-{
-	// TODO: Implement
-	return false;
-}
-
-void FolderMemoryCard::GetSizeInfo(uint slot, PS2E_McdSizeInfo& outways)
-{
-	// TODO: Implement
-
-	outways.SectorSize = 512; // 0x0200
-	outways.EraseBlockSizeInSectors = 16;  // 0x0010
-	outways.Xor = 18;  // 0x12, XOR 02 00 00 10
-
-	//if (pxAssert(m_file[slot].IsOpened()))
-	//	outways.McdSizeInSectors = m_file[slot].Length() / (outways.SectorSize + outways.EraseBlockSizeInSectors);
-	//else
-		outways.McdSizeInSectors = 0x4000;
-
-	u8 *pdata = (u8*)&outways.McdSizeInSectors;
-	outways.Xor ^= pdata[0] ^ pdata[1] ^ pdata[2] ^ pdata[3];
-}
-
-bool FolderMemoryCard::IsPSX(uint slot)
-{
-	// TODO: Implement
-	return false;
-}
-
-s32 FolderMemoryCard::Read(uint slot, u8 *dest, u32 adr, int size)
-{
-	// TODO: Implement
-	const u32 cluster = adr / 0x420u;
-	const u32 offset = adr % 0x420u;
-	Console.WriteLn(L"(FolderMcd) Slot %u, reading %03d bytes at %08x / cluster %05u, offset %03x", slot, size, adr, cluster, offset);
-
-	// return 0 on fail, 1 on success?
-	return 0;
-}
-
-s32 FolderMemoryCard::Save(uint slot, const u8 *src, u32 adr, int size)
-{
-	// TODO: Implement
-	const u32 cluster = adr / 0x420u;
-	const u32 offset = adr % 0x420u;
-	Console.WriteLn(L"(FolderMcd) Slot %u, reading %03d bytes at %08x / cluster %05u, offset %03x", slot, size, adr, cluster, offset);
-
-	// return 0 on fail, 1 on success?
-	return 0;
-}
-
-s32 FolderMemoryCard::EraseBlock(uint slot, u32 adr)
-{
-	// TODO: Implement
-	const u32 cluster = adr / 0x420u;
-	const u32 offset = adr % 0x420u;
-	Console.WriteLn(L"(FolderMcd) Slot %u, erasing block bytes at %08x / cluster %05u, offset %03x", slot, adr, cluster, offset);
-
-	// return 0 on fail, 1 on success?
-	return 0;
-}
-
-u64 FolderMemoryCard::GetCRC(uint slot)
-{
-	// TODO: Implement
-	u64 retval = 0;
-	return retval;
 }

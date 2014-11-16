@@ -537,18 +537,18 @@ s32 FolderMemoryCard::IsPresent()
 
 void FolderMemoryCard::GetSizeInfo(PS2E_McdSizeInfo& outways)
 {
-	// TODO: Implement
-
-	outways.SectorSize = 512; // 0x0200
-	outways.EraseBlockSizeInSectors = 16;  // 0x0010
-	outways.Xor = 18;  // 0x12, XOR 02 00 00 10
-
-	//if (pxAssert(m_file[slot].IsOpened()))
-	//	outways.McdSizeInSectors = m_file[slot].Length() / (outways.SectorSize + outways.EraseBlockSizeInSectors);
-	//else
-	outways.McdSizeInSectors = 0x4000;
+	if ( formatted ) {
+		outways.SectorSize = superBlock.page_len;
+		outways.EraseBlockSizeInSectors = superBlock.pages_per_block;
+		outways.McdSizeInSectors = superBlock.clusters_per_card * superBlock.pages_per_cluster;
+	} else {
+		outways.SectorSize = 512;
+		outways.EraseBlockSizeInSectors = 16;
+		outways.McdSizeInSectors = 0x4000;
+	}
 
 	u8 *pdata = (u8*)&outways.McdSizeInSectors;
+	outways.Xor = 18;
 	outways.Xor ^= pdata[0] ^ pdata[1] ^ pdata[2] ^ pdata[3];
 }
 

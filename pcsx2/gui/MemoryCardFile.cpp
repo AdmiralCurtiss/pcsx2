@@ -560,10 +560,44 @@ bool FolderMemoryCard::IsPSX()
 
 s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 {
-	// TODO: Implement
+	const u32 page = adr / 0x210u;
+	const u32 offset = adr % 0x210u;
 	const u32 cluster = adr / 0x420u;
-	const u32 offset = adr % 0x420u;
-	Console.WriteLn(L"(FolderMcd) reading %03d bytes at %08x / cluster %05u, offset %03x", size, adr, cluster, offset);
+	const u32 end = offset + size;
+	Console.WriteLn( L"(FolderMcd) reading %03d bytes at %08x / cluster %05u, page %05u, offset %03x", size, adr, cluster, page, offset );
+
+	if ( !formatted ) {
+		memset( dest, 0xFF, size );
+		Console.WriteLn( L"(FolderMcd) reading from unformatted memory card, returning 0xFFs" );
+		return 1;
+	}
+
+	if ( end > 0x210 ) {
+		// is trying to read more than one page at a time
+		// do this recursively so that each function call only has to care about one page
+		const u32 toNextPage = 0x210u - offset;
+		Read( dest + toNextPage, adr + toNextPage, size - toNextPage );
+		size = toNextPage;
+	}
+
+	if ( offset < 0x200 ) {
+		// is trying to read (part of) an actual data block
+		const u32 dataOffset = 0;
+		const u32 dataLength = 0x200u - offset;
+
+		// TODO: Implement
+	}
+
+	if ( end > 0x200 ) {
+		// is trying to (partially) read the ECC
+		const u32 eccOffset = 0x200u - offset;
+		const u32 eccLength = std::min( size - offset, 0x10u );
+		u8 ecc[0x10];
+
+		// TODO: Calculate checksum and place into ecc
+		
+		memcpy( dest + eccOffset, ecc, eccLength );
+	}
 
 	// return 0 on fail, 1 on success?
 	return 0;
@@ -573,8 +607,9 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 {
 	// TODO: Implement
 	const u32 cluster = adr / 0x420u;
-	const u32 offset = adr % 0x420u;
-	Console.WriteLn(L"(FolderMcd) reading %03d bytes at %08x / cluster %05u, offset %03x", size, adr, cluster, offset);
+	const u32 page = adr / 0x210u;
+	const u32 offset = adr % 0x210u;
+	Console.WriteLn( L"(FolderMcd) reading %03d bytes at %08x / cluster %05u, page %05u, offset %03x", size, adr, cluster, page, offset );
 
 	// return 0 on fail, 1 on success?
 	return 0;

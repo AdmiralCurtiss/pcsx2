@@ -445,7 +445,16 @@ class FolderMemoryCard
 protected:
 	wxDirName folderName;
 
-	superblock superBlock;
+	union {
+		superblock data;
+		u8 raw[0x2000];
+	} superBlock;
+	u8 backupBlock1[0x2000];
+	u8 backupBlock2[0x2000];
+
+	//u8 [0x2000];
+
+
 	uint slot;
 	bool formatted = false;
 
@@ -520,7 +529,7 @@ void FolderMemoryCard::Open()
 	wxFileName superBlockFileName( str, L"_superblock" );
 	if ( superBlockFileName.FileExists() ) {
 		wxFFile superBlockFile( superBlockFileName.GetFullPath().c_str() );
-		if ( superBlockFile.Read( &superBlock, sizeof(superBlock) ) == sizeof(superBlock) ) {
+		if ( superBlockFile.Read( &superBlock.data, sizeof(superBlock.data) ) == sizeof(superBlock.data) ) {
 			formatted = true;
 		}
 	}
@@ -538,9 +547,9 @@ s32 FolderMemoryCard::IsPresent()
 void FolderMemoryCard::GetSizeInfo(PS2E_McdSizeInfo& outways)
 {
 	if ( formatted ) {
-		outways.SectorSize = superBlock.page_len;
-		outways.EraseBlockSizeInSectors = superBlock.pages_per_block;
-		outways.McdSizeInSectors = superBlock.clusters_per_card * superBlock.pages_per_cluster;
+		outways.SectorSize = superBlock.data.page_len;
+		outways.EraseBlockSizeInSectors = superBlock.data.pages_per_block;
+		outways.McdSizeInSectors = superBlock.data.clusters_per_card * superBlock.data.pages_per_cluster;
 	} else {
 		outways.SectorSize = 512;
 		outways.EraseBlockSizeInSectors = 16;
@@ -560,13 +569,14 @@ bool FolderMemoryCard::IsPSX()
 
 s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 {
+	const u32 block = adr / 0x2100u;
 	const u32 page = adr / 0x210u;
 	const u32 offset = adr % 0x210u;
 	const u32 cluster = adr / 0x420u;
 	const u32 end = offset + size;
 	Console.WriteLn( L"(FolderMcd) reading %03d bytes at %08x / cluster %05u, page %05u, offset %03x", size, adr, cluster, page, offset );
 
-	if ( !formatted ) {
+	if ( !formatted && block > 0 ) {
 		memset( dest, 0xFF, size );
 		Console.WriteLn( L"(FolderMcd) reading from unformatted memory card, returning 0xFFs" );
 		return 1;
@@ -583,9 +593,19 @@ s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 	if ( offset < 0x200 ) {
 		// is trying to read (part of) an actual data block
 		const u32 dataOffset = 0;
-		const u32 dataLength = 0x200u - offset;
+		const u32 dataLength = std::min( (u32)size, 0x200u - offset );
 
-		// TODO: Implement
+		u8* src = nullptr;
+		if ( block == 0 ) {
+			src = superBlock.raw + ( page * 0x200u + offset );
+		}
+
+		if ( src != nullptr ) {
+			memcpy( dest, src, dataLength );
+		} else {
+			// figure out which file to write to
+			// TODO: Implement
+		}
 	}
 
 	if ( end > 0x200 ) {
@@ -595,24 +615,57 @@ s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 		u8 ecc[0x10];
 
 		// TODO: Calculate checksum and place into ecc
+		memset( ecc, 0xFF, 0x10 );
 		
 		memcpy( dest + eccOffset, ecc, eccLength );
 	}
 
 	// return 0 on fail, 1 on success?
-	return 0;
+	return 1;
 }
 
 s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 {
 	// TODO: Implement
+	const u32 block = adr / 0x2100u;
 	const u32 cluster = adr / 0x420u;
 	const u32 page = adr / 0x210u;
 	const u32 offset = adr % 0x210u;
-	Console.WriteLn( L"(FolderMcd) reading %03d bytes at %08x / cluster %05u, page %05u, offset %03x", size, adr, cluster, page, offset );
+	const u32 end = offset + size;
+	Console.WriteLn( L"(FolderMcd) writing %03d bytes at %08x / cluster %05u, page %05u, offset %03x", size, adr, cluster, page, offset );
+
+	if ( end > 0x210 ) {
+		// is trying to store more than one page at a time
+		// do this recursively so that each function call only has to care about one page
+		const u32 toNextPage = 0x210u - offset;
+		Save( src + toNextPage, adr + toNextPage, size - toNextPage );
+		size = toNextPage;
+	}
+
+	if ( offset < 0x200 ) {
+		// is trying to store (part of) an actual data block
+		const u32 dataLength = std::min( (u32)size, 0x200u - offset );
+
+		u8* dest = nullptr;
+		if ( block == 0 ) {
+			dest = superBlock.raw + ( page * 0x200u + offset );
+		}
+
+		if ( dest != nullptr ) {
+			memcpy( dest, src, dataLength );
+		} else {
+			// figure out which file to write to
+			// TODO: Implement
+		}
+	}
+
+	if ( end > 0x200 ) {
+		// is trying to store ECC
+		// simply ignore this, is automatically generated when reading
+	}
 
 	// return 0 on fail, 1 on success?
-	return 0;
+	return 1;
 }
 
 s32 FolderMemoryCard::EraseBlock(u32 adr)
@@ -623,7 +676,7 @@ s32 FolderMemoryCard::EraseBlock(u32 adr)
 	Console.WriteLn(L"(FolderMcd) erasing block bytes at %08x / cluster %05u, offset %03x", adr, cluster, offset);
 
 	// return 0 on fail, 1 on success?
-	return 0;
+	return 1;
 }
 
 u64 FolderMemoryCard::GetCRC()

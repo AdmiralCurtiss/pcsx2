@@ -474,11 +474,10 @@ protected:
 	u8 m_backupBlock1[0x2000];
 	u8 m_backupBlock2[0x2000];
 
-	//u8 [0x2000];
-
-
 	uint slot;
 	bool formatted = false;
+	bool duringFormatting = false;
+	u8 m_fakeFormattingData = 0;
 
 public:
 	FolderMemoryCard();
@@ -640,6 +639,23 @@ s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 	const u32 end = offset + size;
 	Console.WriteLn( L"(FolderMcd) reading %03d bytes at %08x / block %04x, cluster %05x, page %05x, offset %03x", size, adr, block, cluster, page, offset );
 
+	if ( duringFormatting ) {
+		// fake all access
+		if ( end > 0x200 && m_fakeFormattingData == 0x00 ) {
+			// is reading ECC, give the accurate one for all zeroes
+			for ( int i = 0; i < 12; i += 3 ) {
+				dest[i] = 0x77; dest[i + 1] = 0x7f; dest[i + 2] = 0x7f;
+			}
+			for ( int i = 12; i < 16; ++i ) {
+				dest[i] = 0x00;
+			}
+		} else {
+			// just return the last fake byte written
+			memset( dest, m_fakeFormattingData, size );
+		}
+		return 1;
+	}
+
 	if ( !formatted && block > 0 ) {
 		memset( dest, 0xFF, size );
 		Console.WriteLn( L"(FolderMcd) reading from unformatted memory card, returning 0xFFs" );
@@ -693,7 +709,6 @@ s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 
 s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 {
-	// TODO: Implement
 	const u32 block = adr / 0x2100u;
 	const u32 cluster = adr / 0x420u;
 	const u32 page = adr / 0x210u;
@@ -713,12 +728,37 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 		// is trying to store (part of) an actual data block
 		const u32 dataLength = std::min( (u32)size, 0x200u - offset );
 
+		if ( duringFormatting ) {
+			// fake all access because it's only doing "is this block writable? erasable?" stuff
+			if ( adr == 0x2100 && src[0] != 0x00 && src[0] != 0xFF ) {
+				// writing indirect FAT cluster
+				// from now on, we can use regular addressing instead of the weird faking we did before
+				formatted = true;
+				duringFormatting = false;
+			} else {
+				m_fakeFormattingData = src[0];
+				return 1;
+			}
+		}
+
 		u8* dest = GetSystemBlockPointer( adr );
 		if ( dest != nullptr ) {
 			memcpy( dest, src, dataLength );
 			Console.WriteLn( L"(FolderMcd) %02x %02x %02x %02x  %02x %02x %02x %02x", src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7] );
-			if ( adr == 0 && superBlock.data.page_len == 512 && superBlock.data.pages_per_cluster == 2 && superBlock.data.pages_per_block == 16 ) {
-				formatted = true;
+			if ( adr == 0 && size == 0x80 ) {
+				// check for arbitrary byte in the superblock that needs to be set for it to be valid
+				if ( src[0x16] != 0x6F ) {
+					// presumably part of the formatting procedure
+					// the order formatting writes data doesn't work with this implementation,
+					// so work around this by manually fake-formatting the superblock to sensible defaults
+					// and faking read/writes to the superblock until it actually writes it
+					formatted = true;
+					duringFormatting = true;
+					superBlock.data.backup_block1 = 0x03FF;
+					superBlock.data.backup_block2 = 0x03FE;
+					superBlock.data.ifc_list[0] = 0x0008;
+					m_fakeFormattingData = src[0];
+				}
 			}
 		} else {
 			// figure out which file to write to
@@ -737,13 +777,20 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 
 s32 FolderMemoryCard::EraseBlock(u32 adr)
 {
-	// TODO: Implement
 	const u32 block = adr / 0x2100u;
 	Console.WriteLn( L"(FolderMcd) erasing block at %08x / block %04x", adr, block );
+
+	if ( duringFormatting ) {
+		// fake all access
+		m_fakeFormattingData = 0xFF;
+		return 1;
+	}
 
 	u8* dest = GetSystemBlockPointer( adr );
 	if ( dest != nullptr ) {
 		memset( dest, 0xFF, sizeof( superBlock.raw ) );
+	} else {
+		// TODO: delete files I guess?
 	}
 
 	// return 0 on fail, 1 on success?

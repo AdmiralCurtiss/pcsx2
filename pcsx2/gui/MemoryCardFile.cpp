@@ -322,10 +322,6 @@ bool FileMemoryCard::IsPSX( uint slot )
 
 s32 FileMemoryCard::Read( uint slot, u8 *dest, u32 adr, int size )
 {
-	const u32 cluster = adr / 0x420u;
-	const u32 offset = adr % 0x420u;
-	Console.WriteLn(L"(FileMcd) Slot %u, reading %03d bytes at %08x / cluster %05u, offset %03x", slot, size, adr, cluster, offset);
-
 	wxFFile& mcfp( m_file[slot] );
 	if( !mcfp.IsOpened() )
 	{
@@ -333,8 +329,20 @@ s32 FileMemoryCard::Read( uint slot, u8 *dest, u32 adr, int size )
 		memset(dest, 0, size);
 		return 1;
 	}
+
+	const u32 block = adr / 0x2100u;
+	const u32 page = adr / 0x210u;
+	const u32 offset = adr % 0x210u;
+	const u32 cluster = adr / 0x420u;
+	const u32 end = offset + size;
+	Console.WriteLn( L"(FileMcd) reading %03d bytes at %08x / block %04x, cluster %05x, page %05x, offset %03x", size, adr, block, cluster, page, offset );
+
 	if( !Seek(mcfp, adr) ) return 0;
-	return mcfp.Read( dest, size ) != 0;
+	if ( mcfp.Read( dest, size ) != 0 ) {
+		Console.WriteLn( L"(FileMcd) %02x %02x %02x %02x  %02x %02x %02x %02x", dest[0], dest[1], dest[2], dest[3], dest[4], dest[5], dest[6], dest[7] );
+		return 1;
+	}
+	return 0;
 }
 
 s32 FileMemoryCard::Save( uint slot, const u8 *src, u32 adr, int size )
@@ -347,9 +355,13 @@ s32 FileMemoryCard::Save( uint slot, const u8 *src, u32 adr, int size )
 		return 1;
 	}
 
+	const u32 block = adr / 0x2100u;
+	const u32 page = adr / 0x210u;
+	const u32 offset = adr % 0x210u;
 	const u32 cluster = adr / 0x420u;
-	const u32 offset = adr % 0x420u;
-	Console.WriteLn(L"(FileMcd) Slot %u, reading %03d bytes at %08x / cluster %05u, offset %03x", slot, size, adr, cluster, offset);
+	const u32 end = offset + size;
+	Console.WriteLn( L"(FileMcd) writing %03d bytes at %08x / block %04x, cluster %05x, page %05x, offset %03x", size, adr, block, cluster, page, offset );
+	Console.WriteLn( L"(FileMcd) %02x %02x %02x %02x  %02x %02x %02x %02x", src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7] );
 
 	if(m_ispsx[slot])
 	{
@@ -397,9 +409,8 @@ s32 FileMemoryCard::EraseBlock( uint slot, u32 adr )
 		return 1;
 	}
 
-	const u32 cluster = adr / 0x420u;
-	const u32 offset = adr % 0x420u;
-	Console.WriteLn(L"(FileMcd) Slot %u, erasing block bytes at %08x / cluster %05u, offset %03x", slot, adr, cluster, offset);
+	const u32 block = adr / 0x2100u;
+	Console.WriteLn( L"(FileMcd) erasing block at %08x / block %04x", adr, block );
 
 	if( !Seek(mcfp, adr) ) return 0;
 	return mcfp.Write( m_effeffs, sizeof(m_effeffs) ) != 0;
@@ -627,7 +638,7 @@ s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 	const u32 offset = adr % 0x210u;
 	const u32 cluster = adr / 0x420u;
 	const u32 end = offset + size;
-	Console.WriteLn( L"(FolderMcd) reading %03d bytes at %08x / cluster %05u, page %05u, offset %03x", size, adr, cluster, page, offset );
+	Console.WriteLn( L"(FolderMcd) reading %03d bytes at %08x / block %04x, cluster %05x, page %05x, offset %03x", size, adr, block, cluster, page, offset );
 
 	if ( !formatted && block > 0 ) {
 		memset( dest, 0xFF, size );
@@ -651,6 +662,7 @@ s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 		u8* src = GetSystemBlockPointer( adr );
 		if ( src != nullptr ) {
 			memcpy( dest, src, dataLength );
+			Console.WriteLn( L"(FolderMcd) %02x %02x %02x %02x  %02x %02x %02x %02x", src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7] );
 		} else {
 			// figure out which file to write to
 			// TODO: Implement
@@ -687,7 +699,7 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 	const u32 page = adr / 0x210u;
 	const u32 offset = adr % 0x210u;
 	const u32 end = offset + size;
-	Console.WriteLn( L"(FolderMcd) writing %03d bytes at %08x / cluster %05u, page %05u, offset %03x", size, adr, cluster, page, offset );
+	Console.WriteLn( L"(FolderMcd) writing %03d bytes at %08x / block %04x, cluster %05x, page %05x, offset %03x", size, adr, block, cluster, page, offset );
 
 	if ( end > 0x210 ) {
 		// is trying to store more than one page at a time
@@ -704,6 +716,7 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 		u8* dest = GetSystemBlockPointer( adr );
 		if ( dest != nullptr ) {
 			memcpy( dest, src, dataLength );
+			Console.WriteLn( L"(FolderMcd) %02x %02x %02x %02x  %02x %02x %02x %02x", src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7] );
 			if ( adr == 0 && superBlock.data.page_len == 512 && superBlock.data.pages_per_cluster == 2 && superBlock.data.pages_per_block == 16 ) {
 				formatted = true;
 			}
@@ -726,7 +739,7 @@ s32 FolderMemoryCard::EraseBlock(u32 adr)
 {
 	// TODO: Implement
 	const u32 block = adr / 0x2100u;
-	Console.WriteLn( L"(FolderMcd) erasing block at %08x / block %05u", adr, block );
+	Console.WriteLn( L"(FolderMcd) erasing block at %08x / block %04x", adr, block );
 
 	u8* dest = GetSystemBlockPointer( adr );
 	if ( dest != nullptr ) {

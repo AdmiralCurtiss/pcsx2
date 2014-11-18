@@ -445,12 +445,23 @@ class FolderMemoryCard
 protected:
 	wxDirName folderName;
 
-	union {
+	static const int IndirectFatClusterCount = 1; // should be 32 but only 1 is ever used
+	static const int ClusterSize = 0x400;
+
+	union superBlockUnion {
 		superblock data;
 		u8 raw[0x2000];
 	} superBlock;
-	u8 backupBlock1[0x2000];
-	u8 backupBlock2[0x2000];
+	union indirectFatUnion {
+		u32 data[IndirectFatClusterCount][ClusterSize / 4];
+		u8 raw[IndirectFatClusterCount][ClusterSize];
+	} m_indirectFat;
+	union fatUnion {
+		u32 data[IndirectFatClusterCount][ClusterSize / 4][ClusterSize / 4];
+		u8 raw[IndirectFatClusterCount][ClusterSize / 4][ClusterSize];
+	} m_fat;
+	u8 m_backupBlock1[0x2000];
+	u8 m_backupBlock2[0x2000];
 
 	//u8 [0x2000];
 
@@ -481,6 +492,10 @@ public:
 	static void CalculateECC( u8* ecc, const u8* data );
 
 protected:
+	// returns the in-memory address of data the given memory card adr corresponds to
+	// returns nullptr if adr corresponds to a folder or file entry
+	u8* GetSystemBlockPointer( const u32 adr );
+
 	wxString GetDisabledMessage(uint slot) const
 	{
 		return wxsFormat(pxE(L"The PS2-slot %d has been automatically disabled.  You can correct the problem\nand re-enable it at any time using Config:Memory cards from the main menu."
@@ -569,6 +584,42 @@ bool FolderMemoryCard::IsPSX()
 	return false;
 }
 
+u8* FolderMemoryCard::GetSystemBlockPointer( const u32 adr ) {
+	const u32 block = adr / 0x2100u;
+	const u32 page = adr / 0x210u;
+	const u32 offset = adr % 0x210u;
+	const u32 cluster = adr / 0x420u;
+
+	u8* src = nullptr;
+	if ( block == 0 ) {
+		src = &superBlock.raw[page * 0x200u + offset];
+	} else if ( formatted && block == superBlock.data.backup_block1 ) {
+		src = &m_backupBlock1[( page % 16 ) * 0x200u + offset];
+	} else if ( formatted && block == superBlock.data.backup_block2 ) {
+		src = &m_backupBlock2[( page % 16 ) * 0x200u + offset];
+	} else if ( formatted ) {
+		// trying to access indirect FAT?
+		for ( int i = 0; i < IndirectFatClusterCount; ++i ) {
+			if ( cluster == superBlock.data.ifc_list[i] ) {
+				src = &m_indirectFat.raw[i][( page % 2 ) * 0x200u + offset];
+				return src;
+			}
+		}
+		// trying to access FAT?
+		for ( int i = 0; i < IndirectFatClusterCount; ++i ) {
+			for ( int j = 0; j < ClusterSize / 4; ++j ) {
+				const u32 fatCluster = m_indirectFat.data[i][j];
+				if ( fatCluster != 0xFFFFFFFFu && fatCluster == cluster ) {
+					src = &m_fat.raw[i][j][( page % 2 ) * 0x200u + offset];
+					return src;
+				}
+			}
+		}
+	}
+
+	return src;
+}
+
 s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 {
 	const u32 block = adr / 0x2100u;
@@ -597,11 +648,7 @@ s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 		const u32 dataOffset = 0;
 		const u32 dataLength = std::min( (u32)size, 0x200u - offset );
 
-		u8* src = nullptr;
-		if ( block == 0 ) {
-			src = superBlock.raw + ( page * 0x200u + offset );
-		}
-
+		u8* src = GetSystemBlockPointer( adr );
 		if ( src != nullptr ) {
 			memcpy( dest, src, dataLength );
 		} else {
@@ -654,13 +701,12 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 		// is trying to store (part of) an actual data block
 		const u32 dataLength = std::min( (u32)size, 0x200u - offset );
 
-		u8* dest = nullptr;
-		if ( block == 0 ) {
-			dest = superBlock.raw + ( page * 0x200u + offset );
-		}
-
+		u8* dest = GetSystemBlockPointer( adr );
 		if ( dest != nullptr ) {
 			memcpy( dest, src, dataLength );
+			if ( adr == 0 && superBlock.data.page_len == 512 && superBlock.data.pages_per_cluster == 2 && superBlock.data.pages_per_block == 16 ) {
+				formatted = true;
+			}
 		} else {
 			// figure out which file to write to
 			// TODO: Implement
@@ -682,8 +728,9 @@ s32 FolderMemoryCard::EraseBlock(u32 adr)
 	const u32 block = adr / 0x2100u;
 	Console.WriteLn( L"(FolderMcd) erasing block at %08x / block %05u", adr, block );
 
-	if ( block == 0 ) {
-		memset( &superBlock, 0xFF, sizeof( superBlock ) );
+	u8* dest = GetSystemBlockPointer( adr );
+	if ( dest != nullptr ) {
+		memset( dest, 0xFF, sizeof( superBlock.raw ) );
 	}
 
 	// return 0 on fail, 1 on success?

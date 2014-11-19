@@ -32,6 +32,7 @@ struct Component_FileMcd;
 #include "svnrev.h"
 
 #include <wx/ffile.h>
+#include <map>
 
 static const int MCD_SIZE	= 1024 *  8  * 16;		// Legacy PSX card default size
 
@@ -447,6 +448,38 @@ u64 FileMemoryCard::GetCRC( uint slot )
 	return retval;
 }
 
+#pragma pack(push, 1)
+// --------------------------------------------------------------------------------------
+//  MemoryCardFileEntry
+// --------------------------------------------------------------------------------------
+// Structure for directory and file relationships as stored on memory cards
+struct MemoryCardFileEntry {
+	union {
+		struct MemoryCardFileEntryData {
+			u32 mode;
+			u32 length; // number of bytes for file, number of files for dir
+			u64 timeCreated;
+			u32 cluster; // cluster the start of referred file or folder can be found in
+			u32 dirEntry; // parent directory entry number, only used if "." entry of subdir
+			u64 timeModified;
+			u32 attr;
+			u8 padding[0x1C];
+			u8 name[0x20];
+			u8 unused[0x1A0];
+		} data;
+		u8 raw[0x200];
+	} entry;
+
+	bool IsFile() { return !!( entry.data.mode & 0x0010 ); }
+	bool IsDir()  { return !!( entry.data.mode & 0x0020 ); }
+	bool IsUsed() { return !!( entry.data.mode & 0x8000 ); }
+};
+#pragma pack(pop)
+
+struct MemoryCardFileEntryCluster {
+	MemoryCardFileEntry entries[2];
+};
+
 // --------------------------------------------------------------------------------------
 //  FolderMemoryCard
 // --------------------------------------------------------------------------------------
@@ -473,6 +506,8 @@ protected:
 	} m_fat;
 	u8 m_backupBlock1[0x2000];
 	u8 m_backupBlock2[0x2000];
+
+	std::map<u32, MemoryCardFileEntryCluster> m_fileEntryDict;
 
 	uint slot;
 	bool formatted = false;
@@ -505,6 +540,14 @@ protected:
 	// returns the in-memory address of data the given memory card adr corresponds to
 	// returns nullptr if adr corresponds to a folder or file entry
 	u8* GetSystemBlockPointer( const u32 adr );
+	// returns in-memory address of file or directory metadata searchCluster corresponds to
+	// returns nullptr if searchCluster contains something else
+	// originally call by passing:
+	// - currentCluster: the root directory cluster as indicated in the superblock
+	// - searchCluster: the cluster that is being accessed, relative to alloc_offset in the superblock
+	// - entryNumber: page of cluster
+	// - offset: offset of page
+	u8* GetFileEntryPointer( const u32 currentCluster, const u32 searchCluster, const u32 entryNumber, const u32 offset );
 
 	wxString GetDisabledMessage(uint slot) const
 	{
@@ -603,7 +646,9 @@ u8* FolderMemoryCard::GetSystemBlockPointer( const u32 adr ) {
 	const u32 startDataCluster = superBlock.data.alloc_offset;
 	const u32 endDataCluster = startDataCluster + superBlock.data.alloc_end;
 	if ( formatted && cluster >= startDataCluster && cluster < endDataCluster ) {
-		return nullptr;
+		// trying to access a file entry?
+		const u32 fatCluster = cluster - superBlock.data.alloc_offset;
+		return GetFileEntryPointer( superBlock.data.rootdir_cluster, fatCluster, page % 2, offset );
 	}
 
 	u8* src = nullptr;
@@ -634,6 +679,31 @@ u8* FolderMemoryCard::GetSystemBlockPointer( const u32 adr ) {
 	}
 
 	return src;
+}
+
+u8* FolderMemoryCard::GetFileEntryPointer( const u32 currentCluster, const u32 searchCluster, const u32 entryNumber, const u32 offset ) {
+	// we found the correct cluster, return pointer to it
+	if ( currentCluster == searchCluster ) {
+		return &m_fileEntryDict[currentCluster].entries[entryNumber].entry.raw[offset];
+	}
+
+	// check other clusters of this directory
+	const u32 nextCluster = m_fat.data[0][0][currentCluster] & 0x7FFFFFFF;
+	if ( nextCluster != 0x7FFFFFFF ) {
+		u8* ptr = GetFileEntryPointer( nextCluster, searchCluster, entryNumber, offset );
+		if ( ptr != nullptr ) { return ptr; }
+	}
+
+	// check subdirectories
+	for ( int i = 0; i < 2; ++i ) {
+		MemoryCardFileEntry* const entry = &m_fileEntryDict[currentCluster].entries[i];
+		if ( entry->IsUsed() && entry->IsDir() && entry->entry.data.cluster != 0 ) {
+			u8* ptr = GetFileEntryPointer( entry->entry.data.cluster, searchCluster, entryNumber, offset );
+			if ( ptr != nullptr ) { return ptr; }
+		}
+	}
+
+	return nullptr;
 }
 
 s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)

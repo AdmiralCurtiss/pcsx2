@@ -600,6 +600,12 @@ u8* FolderMemoryCard::GetSystemBlockPointer( const u32 adr ) {
 	const u32 offset = adr % 0x210u;
 	const u32 cluster = adr / 0x420u;
 
+	const u32 startDataCluster = superBlock.data.alloc_offset;
+	const u32 endDataCluster = startDataCluster + superBlock.data.alloc_end;
+	if ( formatted && cluster >= startDataCluster && cluster < endDataCluster ) {
+		return nullptr;
+	}
+
 	u8* src = nullptr;
 	if ( block == 0 ) {
 		src = &superBlock.raw[page * 0x200u + offset];
@@ -757,6 +763,8 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 					superBlock.data.backup_block1 = 0x03FF;
 					superBlock.data.backup_block2 = 0x03FE;
 					superBlock.data.ifc_list[0] = 0x0008;
+					superBlock.data.alloc_offset = 0x29;
+					superBlock.data.alloc_end = 0x1FC7;
 					m_fakeFormattingData = src[0];
 				}
 			}

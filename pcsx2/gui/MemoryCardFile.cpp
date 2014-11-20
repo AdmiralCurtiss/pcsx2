@@ -916,12 +916,13 @@ s32 FolderMemoryCard::EraseBlock(u32 adr)
 		return 1;
 	}
 
-	u8* dest = GetSystemBlockPointer( adr );
-	if ( dest != nullptr ) {
-		// FIXME: THIS BREAKS HORRIBLY WHEN ERASING ON THE BOUNDARY OF FAT AND DATA
-		memset( dest, 0xFF, sizeof( superBlock.raw ) );
-	} else {
-		// TODO: delete files I guess?
+	for ( int page = 0; page < 16; ++page ) {
+		u8* const dest = GetSystemBlockPointer( block * 0x2100 + page * 0x210 );
+		if ( dest != nullptr ) {
+			memset( dest, 0xFF, 0x200 );
+		} else {
+			// TODO: delete files I guess?
+		}
 	}
 
 	// return 0 on fail, 1 on success?

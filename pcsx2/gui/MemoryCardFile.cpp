@@ -866,6 +866,7 @@ s32 FolderMemoryCard::EraseBlock(u32 adr)
 
 	u8* dest = GetSystemBlockPointer( adr );
 	if ( dest != nullptr ) {
+		// FIXME: THIS BREAKS HORRIBLY WHEN ERASING ON THE BOUNDARY OF FAT AND DATA
 		memset( dest, 0xFF, sizeof( superBlock.raw ) );
 	} else {
 		// TODO: delete files I guess?

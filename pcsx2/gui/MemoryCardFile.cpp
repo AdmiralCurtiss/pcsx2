@@ -548,6 +548,15 @@ protected:
 	// - entryNumber: page of cluster
 	// - offset: offset of page
 	u8* GetFileEntryPointer( const u32 currentCluster, const u32 searchCluster, const u32 entryNumber, const u32 offset );
+	// returns file entry of the file at the given searchCluster
+	// the passed fileName will be filled with a path to the file being accessed
+	// returns nullptr if searchCluster contains no file
+	// call by passing:
+	// - currentCluster: the root directory cluster as indicated in the superblock
+	// - searchCluster: the cluster that is being accessed, relative to alloc_offset in the superblock
+	// - fileName: wxFileName of the root directory of the memory card folder in the host file system (filename part doesn't matter)
+	// - originalDirCount: the point in fileName where to insert the found folder path, usually fileName->GetDirCount()
+	MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u32 currentCluster, const u32 searchCluster, wxFileName* fileName, const size_t originalDirCount );
 
 	wxString GetDisabledMessage(uint slot) const
 	{
@@ -700,6 +709,49 @@ u8* FolderMemoryCard::GetFileEntryPointer( const u32 currentCluster, const u32 s
 		if ( entry->IsUsed() && entry->IsDir() && entry->entry.data.cluster != 0 ) {
 			u8* ptr = GetFileEntryPointer( entry->entry.data.cluster, searchCluster, entryNumber, offset );
 			if ( ptr != nullptr ) { return ptr; }
+		}
+	}
+
+	return nullptr;
+}
+
+MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u32 currentCluster, const u32 searchCluster, wxFileName* fileName, const size_t originalDirCount ) {
+	// check both entries of the current cluster if they're the file we're searching for, and if yes return it
+	for ( int i = 0; i < 2; ++i ) {
+		MemoryCardFileEntry* const entry = &m_fileEntryDict[currentCluster].entries[i];
+		if ( entry->IsUsed() && entry->IsFile() ) {
+			u32 fileCluster = entry->entry.data.cluster;
+			do {
+				if ( fileCluster == searchCluster ) {
+					fileName->SetName( wxString::FromAscii( (const char*)entry->entry.data.name ) );
+					return entry;
+				}
+			} while ( ( fileCluster = m_fat.data[0][0][fileCluster] & 0x7FFFFFFF ) != 0x7FFFFFFF );
+			// There's a lot of optimization work that can be done here, looping through all clusters of every single file
+			// is not very efficient, especially since files are going to be accessed from the start and in-order the vast
+			// majority of the time. You can probably cut a lot of the work by remembering the state of the last access
+			// and only checking if the current access is either the same or the next cluster according to the FAT.
+			//} while ( false );
+		}
+	}
+
+	// check other clusters of this directory
+	// this can probably be solved more efficiently by looping through nextClusters instead of recursively calling
+	const u32 nextCluster = m_fat.data[0][0][currentCluster] & 0x7FFFFFFF;
+	if ( nextCluster != 0x7FFFFFFF ) {
+		MemoryCardFileEntry* ptr = GetFileEntryFromFileDataCluster( nextCluster, searchCluster, fileName, originalDirCount );
+		if ( ptr != nullptr ) { return ptr; }
+	}
+
+	// check subdirectories
+	for ( int i = 0; i < 2; ++i ) {
+		MemoryCardFileEntry* const entry = &m_fileEntryDict[currentCluster].entries[i];
+		if ( entry->IsUsed() && entry->IsDir() && entry->entry.data.cluster != 0 ) {
+			MemoryCardFileEntry* ptr = GetFileEntryFromFileDataCluster( entry->entry.data.cluster, searchCluster, fileName, originalDirCount );
+			if ( ptr != nullptr ) {
+				fileName->InsertDir( originalDirCount, wxString::FromAscii( (const char*)entry->entry.data.name ) );
+				return ptr;
+			}
 		}
 	}
 

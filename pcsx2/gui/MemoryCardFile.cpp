@@ -892,7 +892,22 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 			}
 		} else {
 			// figure out which file to write to
-			// TODO: Implement
+			const u32 fatCluster = cluster - superBlock.data.alloc_offset;
+			wxFileName fileName( folderName );
+			const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataCluster( superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount() );
+			if ( entry != nullptr ) {
+				Console.WriteLn( L"(FolderMcd) Writing to %s", fileName.GetFullPath().c_str() );
+				if ( !fileName.DirExists() ) {
+					fileName.Mkdir();
+				}
+				wxFFile file( fileName.GetFullPath(), L"ab" );
+				if ( file.IsOpened() ) {
+					// TODO: proper writes and stuff
+					file.Write( src, dataLength );
+				}
+			} else {
+				Console.WriteLn( L"(FolderMcd) Writing to nothing???" );
+			}
 		}
 	}
 

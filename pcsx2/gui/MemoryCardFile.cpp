@@ -487,7 +487,7 @@ struct MemoryCardFileEntryCluster {
 class FolderMemoryCard
 {
 protected:
-	wxDirName folderName;
+	wxFileName folderName;
 
 	static const int IndirectFatClusterCount = 1; // should be 32 but only 1 is ever used
 	static const int ClusterSize = 0x400;
@@ -575,7 +575,7 @@ void FolderMemoryCard::Open()
 {
 	wxFileName configuredFileName( g_Conf->FullpathToMcd(slot) );
 	configuredFileName.ClearExt();
-	folderName = wxDirName( configuredFileName.GetFullPath() );
+	folderName = wxFileName( configuredFileName.GetFullPath() + L"/" );
 	wxString str( configuredFileName.GetFullPath() );
 	bool disabled = false;
 
@@ -590,7 +590,7 @@ void FolderMemoryCard::Open()
 		}
 		
 		// if nothing exists at a valid location, create a directory for the memory card
-		if ( !disabled && !folderName.Exists() ) {
+		if ( !disabled && !folderName.DirExists() ) {
 			if ( !folderName.Mkdir() ) {
 				str = L"[couldn't create folder]";
 				disabled = true;
@@ -620,7 +620,7 @@ void FolderMemoryCard::Close()
 
 s32 FolderMemoryCard::IsPresent()
 {
-	return folderName.Exists();
+	return folderName.DirExists();
 }
 
 void FolderMemoryCard::GetSizeInfo(PS2E_McdSizeInfo& outways)

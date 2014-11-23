@@ -605,6 +605,7 @@ protected:
 
 
 	bool ReadFromFile( u8 *dest, u32 adr, u32 dataLength );
+	bool WriteToFile( const u8* src, u32 adr, u32 dataLength );
 
 	wxString GetDisabledMessage(uint slot) const
 	{
@@ -1218,24 +1219,7 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 				}
 			}
 		} else {
-			// figure out which file to write to
-			const u32 fatCluster = cluster - superBlock.data.alloc_offset;
-			wxFileName fileName( folderName );
-			u32 clusterNumber;
-			const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataCluster( superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount(), &clusterNumber );
-			if ( entry != nullptr ) {
-				Console.WriteLn( L"(FolderMcd) Writing to %s", fileName.GetFullPath().c_str() );
-				if ( !fileName.DirExists() ) {
-					fileName.Mkdir();
-				}
-				wxFFile file( fileName.GetFullPath(), L"ab" );
-				if ( file.IsOpened() ) {
-					// TODO: proper writes and stuff
-					file.Write( src, dataLength );
-				}
-			} else {
-				Console.WriteLn( L"(FolderMcd) Writing to nothing???" );
-			}
+			WriteToFile( src, adr, dataLength );
 		}
 	}
 
@@ -1246,6 +1230,46 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 
 	// return 0 on fail, 1 on success?
 	return 1;
+}
+
+bool FolderMemoryCard::WriteToFile( const u8* src, u32 adr, u32 dataLength ) {
+	const u32 cluster = adr / 0x420u;
+	const u32 page = adr / 0x210u;
+	const u32 offset = adr % 0x210u;
+	const u32 fatCluster = cluster - superBlock.data.alloc_offset;
+
+	// figure out which file to write to
+	wxFileName fileName( folderName );
+	u32 clusterNumber;
+	const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataCluster( superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount(), &clusterNumber );
+	if ( entry != nullptr ) {
+		Console.WriteLn( L"(FolderMcd) Writing to file: %s", fileName.GetFullPath().c_str() );
+		if ( !fileName.DirExists() ) {
+			fileName.Mkdir();
+		}
+		wxFFile file( fileName.GetFullPath(), L"r+b" );
+		if ( file.IsOpened() ) {
+			const u32 clusterOffset = ( page % 2 ) * 0x200u + offset;
+			const u32 fileSize = entry->entry.data.length;
+			const u32 fileOffsetStart = std::min( clusterNumber * 0x400u + clusterOffset, fileSize );;
+			const u32 fileOffsetEnd = std::min( fileOffsetStart + dataLength, fileSize );
+			const u32 bytesToWrite = fileOffsetEnd - fileOffsetStart;
+			Console.WriteLn( L"(FolderMcd) Writing %03d bytes at %08x, corresponds to cluster %d offset %03x or file offset %06x", bytesToWrite, adr, clusterNumber, clusterOffset, fileOffsetStart );
+
+			file.Seek( fileOffsetStart );
+			if ( bytesToWrite > 0 ) {
+				file.Write( src, bytesToWrite );
+			}
+
+			file.Close();
+
+			return true;
+		}
+	} else {
+		Console.WriteLn( L"(FolderMcd) Writing to nothing???" );
+	}
+
+	return false;
 }
 
 s32 FolderMemoryCard::EraseBlock(u32 adr)

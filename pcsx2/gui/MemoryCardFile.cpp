@@ -707,12 +707,12 @@ void FolderMemoryCard::CreateFat() {
 	const u32 countDataClusters = superBlock.data.alloc_end;
 
 	// create indirect FAT
-	for ( int i = 0; i < countFatClusters; ++i ) {
+	for ( unsigned int i = 0; i < countFatClusters; ++i ) {
 		m_indirectFat.data[0][i] = GetFreeSystemCluster();
 	}
 
 	// fill FAT with default values
-	for ( int i = 0; i < countDataClusters; ++i ) {
+	for ( unsigned int i = 0; i < countDataClusters; ++i ) {
 		m_fat.data[0][0][i] = 0x7FFFFFFFu;
 	}
 }
@@ -757,7 +757,7 @@ u32 FolderMemoryCard::GetFreeSystemCluster() {
 u32 FolderMemoryCard::GetFreeDataCluster() {
 	const u32 countDataClusters = superBlock.data.alloc_end;
 
-	for ( int i = 0; i < countDataClusters; ++i ) {
+	for ( unsigned int i = 0; i < countDataClusters; ++i ) {
 		const u32 cluster = m_fat.data[0][0][i];
 
 		if ( ( cluster & 0x80000000 ) == 0 ) {
@@ -875,7 +875,7 @@ void FolderMemoryCard::AddFile( MemoryCardFileEntry* const dirEntry, const wxStr
 
 		u32 dataCluster = fileDataStartingCluster;
 		m_fat.data[0][0][dataCluster] = 0xFFFFFFFF;
-		for ( int i = 0; i < countClusters - 1; ++i ) {
+		for ( unsigned int i = 0; i < countClusters - 1; ++i ) {
 			u32 newCluster = GetFreeDataCluster();
 			m_fat.data[0][0][dataCluster] = newCluster | 0x80000000;
 			m_fat.data[0][0][newCluster] = 0xFFFFFFFF;

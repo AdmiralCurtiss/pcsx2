@@ -16,6 +16,7 @@
 #include "PrecompiledHeader.h"
 #include "Utilities/SafeArray.inl"
 #include <wx/file.h>
+#include <wx/dir.h>
 
 #include "MemoryCardFile.h"
 
@@ -512,7 +513,7 @@ protected:
 	uint slot;
 	bool formatted = false;
 	bool duringFormatting = false;
-	u8 m_fakeFormattingData = 0;
+	u8 m_fakeFormattingData = 0xFF;
 
 public:
 	FolderMemoryCard();
@@ -537,9 +538,14 @@ public:
 	static void CalculateECC( u8* ecc, const u8* data );
 
 protected:
+	// initializes memory card data, as if it was fresh from the factory
+	void InitializeInternalData();
+
+
 	// returns the in-memory address of data the given memory card adr corresponds to
 	// returns nullptr if adr corresponds to a folder or file entry
 	u8* GetSystemBlockPointer( const u32 adr );
+	
 	// returns in-memory address of file or directory metadata searchCluster corresponds to
 	// returns nullptr if searchCluster contains something else
 	// originally call by passing:
@@ -548,6 +554,7 @@ protected:
 	// - entryNumber: page of cluster
 	// - offset: offset of page
 	u8* GetFileEntryPointer( const u32 currentCluster, const u32 searchCluster, const u32 entryNumber, const u32 offset );
+	
 	// returns file entry of the file at the given searchCluster
 	// the passed fileName will be filled with a path to the file being accessed
 	// returns nullptr if searchCluster contains no file
@@ -557,6 +564,43 @@ protected:
 	// - fileName: wxFileName of the root directory of the memory card folder in the host file system (filename part doesn't matter)
 	// - originalDirCount: the point in fileName where to insert the found folder path, usually fileName->GetDirCount()
 	MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u32 currentCluster, const u32 searchCluster, wxFileName* fileName, const size_t originalDirCount );
+
+
+	// loads files and folders from the host file system if a superblock exists in the root directory
+	void LoadMemoryCardData();
+
+	// creates the FAT and indirect FAT
+	void CreateFat();
+
+	// creates file entries for the root directory
+	void CreateRootDir();
+	
+
+	// returns the system cluster past the highest used one (will be the lowest free one under normal use)
+	// this is used for creating the FAT, don't call otherwise unless you know exactly what you're doing
+	u32 GetFreeSystemCluster();
+
+	// returns the lowest unused data cluster, relative to alloc_offset in the superblock
+	u32 GetFreeDataCluster();
+
+	// returns the final cluster of the file or directory which is (partially) stored in the given cluster
+	u32 GetLastClusterOfData( const u32 cluster );
+
+
+	// creates and returns a new file entry in the given directory entry, ready to be filled
+	MemoryCardFileEntry* AppendFileEntryToDir( MemoryCardFileEntry* const dirEntry );
+
+	// adds a folder in the host file system to the memory card, including all files and subdirectories
+	// - dirEntry: the entry of the directory in the parent directory, or the root "." entry
+	// - dirPath: the full path to the directory in the host file system
+	void AddFolder( MemoryCardFileEntry* const dirEntry, const wxString& dirPath );
+
+	// adds a file in the host file sytem to the memory card
+	// - dirEntry: the entry of the directory in the parent directory, or the root "." entry
+	// - dirPath: the full path to the directory containing the file in the host file system
+	// - fileName: the name of the file, without path
+	void AddFile( MemoryCardFileEntry* const dirEntry, const wxString& dirPath, const wxString& fileName );
+
 
 	wxString GetDisabledMessage(uint slot) const
 	{
@@ -568,11 +612,24 @@ protected:
 
 FolderMemoryCard::FolderMemoryCard()
 {
-	memset( &superBlock, 0xFF, sizeof(superBlock) );
+	slot = 0;
+}
+
+void FolderMemoryCard::InitializeInternalData() {
+	memset( &superBlock, 0xFF, sizeof( superBlock ) );
+	memset( &m_indirectFat, 0xFF, sizeof( m_indirectFat ) );
+	memset( &m_fat, 0xFF, sizeof( m_fat ) );
+	memset( &m_backupBlock1, 0xFF, sizeof( m_backupBlock1 ) );
+	memset( &m_backupBlock2, 0xFF, sizeof( m_backupBlock2 ) );
+	formatted = false;
+	duringFormatting = false;
+	m_fakeFormattingData = 0xFF;
 }
 
 void FolderMemoryCard::Open()
 {
+	InitializeInternalData();
+
 	wxFileName configuredFileName( g_Conf->FullpathToMcd(slot) );
 	configuredFileName.ClearExt();
 	folderName = wxFileName( configuredFileName.GetFullPath() + L"/" );
@@ -604,18 +661,232 @@ void FolderMemoryCard::Open()
 	Console.WriteLn( disabled ? Color_Gray : Color_Green, L"McdSlot %u: " + str, slot );
 	if ( disabled ) return;
 
-	// read superblock if it exists
-	wxFileName superBlockFileName( str, L"_superblock" );
-	if ( superBlockFileName.FileExists() ) {
-		wxFFile superBlockFile( superBlockFileName.GetFullPath().c_str() );
-		if ( superBlockFile.Read( &superBlock.data, sizeof(superBlock.data) ) == sizeof(superBlock.data) ) {
-			formatted = true;
+	LoadMemoryCardData();
+}
+
+void FolderMemoryCard::Close() {
+	if ( formatted && !duringFormatting ) {
+		wxFileName superBlockFileName( folderName.GetPath(), L"_pcsx2_superblock" );
+		wxFFile superBlockFile( superBlockFileName.GetFullPath().c_str(), L"w" );
+		if ( superBlockFile.IsOpened() ) {
+			superBlockFile.Write( &superBlock.raw, sizeof( superBlock.raw ) );
 		}
 	}
 }
 
-void FolderMemoryCard::Close()
-{
+void FolderMemoryCard::LoadMemoryCardData() {
+	formatted = false;
+
+	// read superblock if it exists
+	wxFileName superBlockFileName( folderName.GetPath(), L"_pcsx2_superblock" );
+	if ( superBlockFileName.FileExists() ) {
+		wxFFile superBlockFile( superBlockFileName.GetFullPath().c_str(), L"r" );
+		if ( superBlockFile.IsOpened() && superBlockFile.Read( &superBlock.raw, sizeof( superBlock.raw ) ) >= sizeof( superBlock.data ) ) {
+			if ( superBlock.raw[0x16] == 0x6F ) {
+				formatted = true;
+			}
+		}
+	}
+
+	// if superblock was valid, load folders and files
+	if ( formatted ) {
+		CreateFat();
+		CreateRootDir();
+		MemoryCardFileEntry* const rootDirEntry = &m_fileEntryDict[superBlock.data.rootdir_cluster].entries[0];
+		AddFolder( rootDirEntry, folderName.GetPath() );
+	}
+
+	return;
+}
+
+void FolderMemoryCard::CreateFat() {
+	const u32 totalClusters = superBlock.data.clusters_per_card;
+	const u32 clusterSize = superBlock.data.page_len * superBlock.data.pages_per_cluster;
+	const u32 fatEntriesPerCluster = clusterSize / 4;
+	const u32 countFatClusters = ( totalClusters % fatEntriesPerCluster ) != 0 ? ( totalClusters / fatEntriesPerCluster + 1 ) : ( totalClusters / fatEntriesPerCluster );
+	const u32 countDataClusters = superBlock.data.alloc_end;
+
+	// create indirect FAT
+	for ( int i = 0; i < countFatClusters; ++i ) {
+		m_indirectFat.data[0][i] = GetFreeSystemCluster();
+	}
+
+	// fill FAT with default values
+	for ( int i = 0; i < countDataClusters; ++i ) {
+		m_fat.data[0][0][i] = 0x7FFFFFFFu;
+	}
+}
+
+void FolderMemoryCard::CreateRootDir() {
+	MemoryCardFileEntryCluster* const rootCluster = &m_fileEntryDict[superBlock.data.rootdir_cluster];
+	memset( &rootCluster->entries[0].entry.raw[0], 0x00, 0x200 );
+	rootCluster->entries[0].entry.data.mode = 0x8427;
+	rootCluster->entries[0].entry.data.length = 2;
+	rootCluster->entries[0].entry.data.name[0] = '.';
+
+	memset( &rootCluster->entries[1].entry.raw[0], 0x00, 0x200 );
+	rootCluster->entries[1].entry.data.mode = 0xA426;
+	rootCluster->entries[1].entry.data.name[0] = '.';
+	rootCluster->entries[1].entry.data.name[1] = '.';
+
+	// mark root dir cluster as used
+	m_fat.data[0][0][superBlock.data.rootdir_cluster] = 0xFFFFFFFFu;
+}
+
+u32 FolderMemoryCard::GetFreeSystemCluster() {
+	// first block is reserved for superblock
+	u32 highestUsedCluster = ( superBlock.data.pages_per_block / superBlock.data.pages_per_cluster ) - 1;
+
+	// can't use any of the indirect fat clusters
+	for ( int i = 0; i < IndirectFatClusterCount; ++i ) {
+		highestUsedCluster = std::max( highestUsedCluster, superBlock.data.ifc_list[i] );
+	}
+
+	// or fat clusters
+	for ( int i = 0; i < IndirectFatClusterCount; ++i ) {
+		for ( int j = 0; j < ClusterSize / 4; ++j ) {
+			if ( m_indirectFat.data[i][j] != 0xFFFFFFFFu ) {
+				highestUsedCluster = std::max( highestUsedCluster, m_indirectFat.data[i][j] );
+			}
+		}
+	}
+
+	return highestUsedCluster + 1;
+}
+
+u32 FolderMemoryCard::GetFreeDataCluster() {
+	const u32 countDataClusters = superBlock.data.alloc_end;
+
+	for ( int i = 0; i < countDataClusters; ++i ) {
+		const u32 cluster = m_fat.data[0][0][i];
+
+		if ( ( cluster & 0x80000000 ) == 0 ) {
+			return i;
+		}
+	}
+
+	return 0xFFFFFFFF;
+}
+
+u32 FolderMemoryCard::GetLastClusterOfData( const u32 cluster ) {
+	u32 entryCluster;
+	u32 nextCluster = cluster;
+	do {
+		entryCluster = nextCluster;
+		nextCluster = m_fat.data[0][0][entryCluster] & 0x7FFFFFFF;
+	} while ( nextCluster != 0x7FFFFFFF );
+	return entryCluster;
+}
+
+MemoryCardFileEntry* FolderMemoryCard::AppendFileEntryToDir( MemoryCardFileEntry* const dirEntry ) {
+	u32 entryCluster = GetLastClusterOfData( dirEntry->entry.data.cluster );
+
+	MemoryCardFileEntry* newFileEntry;
+	if ( dirEntry->entry.data.length % 2 == 0 ) {
+		// need new cluster
+		u32 newCluster = GetFreeDataCluster();
+		m_fat.data[0][0][entryCluster] = newCluster | 0x80000000;
+		m_fat.data[0][0][newCluster] = 0xFFFFFFFF;
+		newFileEntry = &m_fileEntryDict[newCluster].entries[0];
+	} else {
+		// can use last page of existing clusters
+		newFileEntry = &m_fileEntryDict[entryCluster].entries[1];
+	}
+
+	return newFileEntry;
+}
+
+void FolderMemoryCard::AddFolder( MemoryCardFileEntry* const dirEntry, const wxString& dirPath ) {
+	wxDir dir( dirPath );
+	if ( dir.IsOpened() ) {
+		Console.WriteLn( L"(FolderMcd) Adding folder: %s", dirPath.c_str() );
+		
+		const u32 dirStartCluster = dirEntry->entry.data.cluster;
+
+		wxString fileName;
+		bool hasNext;
+
+		int entryNumber = 2; // include . and ..
+		hasNext = dir.GetFirst( &fileName );
+		while ( hasNext ) {
+			bool isFile = wxFile::Exists( wxFileName( dirPath, fileName ).GetFullPath() );
+
+			if ( isFile ) {
+				if ( !fileName.StartsWith( L"_pcsx2_" ) ) {
+					AddFile( dirEntry, dirPath, fileName );
+					++entryNumber;
+				}
+			} else {
+				// is a subdirectory
+				// add entry for subdir in parent dir
+				MemoryCardFileEntry* newDirEntry = AppendFileEntryToDir( dirEntry );
+				dirEntry->entry.data.length++;
+				newDirEntry->entry.data.mode = 0x8427;
+				newDirEntry->entry.data.length = 2;
+				strcpy( (char*)&newDirEntry->entry.data.name[0], fileName.mbc_str() );
+
+				// create new cluster for . and .. entries
+				u32 newCluster = GetFreeDataCluster();
+				m_fat.data[0][0][newCluster] = 0xFFFFFFFF;
+				newDirEntry->entry.data.cluster = newCluster;
+
+				MemoryCardFileEntryCluster* const subDirCluster = &m_fileEntryDict[newCluster];
+				memset( &subDirCluster->entries[0].entry.raw[0], 0x00, 0x200 );
+				subDirCluster->entries[0].entry.data.mode = 0x8427;
+				subDirCluster->entries[0].entry.data.dirEntry = entryNumber;
+				subDirCluster->entries[0].entry.data.name[0] = '.';
+
+				memset( &subDirCluster->entries[1].entry.raw[0], 0x00, 0x200 );
+				subDirCluster->entries[1].entry.data.mode = 0x8427;
+				subDirCluster->entries[1].entry.data.name[0] = '.';
+				subDirCluster->entries[1].entry.data.name[1] = '.';
+
+				// and add all files in subdir
+				AddFolder( newDirEntry, wxFileName( dirPath, fileName ).GetFullPath() );
+				++entryNumber;
+			}
+
+			hasNext = dir.GetNext( &fileName );
+		}
+	}
+}
+
+void FolderMemoryCard::AddFile( MemoryCardFileEntry* const dirEntry, const wxString& dirPath, const wxString& fileName ) {
+	wxFileName relativeFilePath( dirPath, fileName );
+	relativeFilePath.MakeRelativeTo( folderName.GetPath() );
+	Console.WriteLn( L"(FolderMcd) Adding file: %s", relativeFilePath.GetFullPath().c_str() );
+
+	MemoryCardFileEntry* newFileEntry = AppendFileEntryToDir( dirEntry );
+
+	wxFFile file( wxFileName( dirPath, fileName ).GetFullPath(), L"r" );
+	if ( file.IsOpened() ) {
+		// set file entry data
+		const u32 filesize = file.Length();
+		memset( &newFileEntry->entry.raw[0], 0x00, 0x200 );
+		newFileEntry->entry.data.mode = 0x8497;
+		newFileEntry->entry.data.length = filesize;
+		u32 fileDataStartingCluster = GetFreeDataCluster();
+		newFileEntry->entry.data.cluster = fileDataStartingCluster;
+		strcpy( (char*)&newFileEntry->entry.data.name[0], fileName.mbc_str() );
+
+		// mark the appropriate amount of clusters as used
+		const u32 clusterSize = superBlock.data.pages_per_cluster * superBlock.data.page_len;
+		const u32 countClusters = ( filesize % clusterSize ) != 0 ? ( filesize / clusterSize + 1 ) : ( filesize / clusterSize );
+
+		u32 dataCluster = fileDataStartingCluster;
+		m_fat.data[0][0][dataCluster] = 0xFFFFFFFF;
+		for ( int i = 0; i < countClusters - 1; ++i ) {
+			u32 newCluster = GetFreeDataCluster();
+			m_fat.data[0][0][dataCluster] = newCluster | 0x80000000;
+			m_fat.data[0][0][newCluster] = 0xFFFFFFFF;
+			dataCluster = newCluster;
+		}
+
+		file.Close();
+	}
+
+	// and finally, increase file count in the directory entry
+	dirEntry->entry.data.length++;
 }
 
 s32 FolderMemoryCard::IsPresent()

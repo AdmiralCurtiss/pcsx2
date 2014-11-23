@@ -450,6 +450,16 @@ u64 FileMemoryCard::GetCRC( uint slot )
 }
 
 #pragma pack(push, 1)
+struct MemoryCardFileEntryDateTime {
+	u8 unused;
+	u8 second;
+	u8 minute;
+	u8 hour;
+	u8 day;
+	u8 month;
+	u16 year;
+};
+
 // --------------------------------------------------------------------------------------
 //  MemoryCardFileEntry
 // --------------------------------------------------------------------------------------
@@ -459,10 +469,18 @@ struct MemoryCardFileEntry {
 		struct MemoryCardFileEntryData {
 			u32 mode;
 			u32 length; // number of bytes for file, number of files for dir
-			u64 timeCreated;
+			union {
+				MemoryCardFileEntryDateTime data;
+				u64 value;
+				u8 raw[8];
+			} timeCreated;
 			u32 cluster; // cluster the start of referred file or folder can be found in
 			u32 dirEntry; // parent directory entry number, only used if "." entry of subdir
-			u64 timeModified;
+			union {
+				MemoryCardFileEntryDateTime data;
+				u64 value;
+				u8 raw[8];
+			} timeModified;
 			u32 attr;
 			u8 padding[0x1C];
 			u8 name[0x20];
@@ -587,6 +605,8 @@ protected:
 
 	// returns the final cluster of the file or directory which is (partially) stored in the given cluster
 	u32 GetLastClusterOfData( const u32 cluster );
+
+	u64 ConvertToMemoryCardTimestamp( const wxDateTime& time );
 
 
 	// creates and returns a new file entry in the given directory entry, ready to be filled
@@ -783,6 +803,29 @@ u32 FolderMemoryCard::GetLastClusterOfData( const u32 cluster ) {
 	return entryCluster;
 }
 
+u64 FolderMemoryCard::ConvertToMemoryCardTimestamp( const wxDateTime& time ) {
+	if ( !time.IsValid() ) {
+		return 0;
+	}
+
+	union {
+		MemoryCardFileEntryDateTime data;
+		u64 value;
+	} t;
+
+	wxDateTime::Tm tm = time.GetTm( wxDateTime::GMT9 );
+
+	t.data.unused = 0;
+	t.data.second = tm.sec;
+	t.data.minute = tm.min;
+	t.data.hour = tm.hour;
+	t.data.day = tm.mday;
+	t.data.month = tm.mon + 1;
+	t.data.year = tm.year;
+
+	return t.value;
+}
+
 MemoryCardFileEntry* FolderMemoryCard::AppendFileEntryToDir( MemoryCardFileEntry* const dirEntry ) {
 	u32 entryCluster = GetLastClusterOfData( dirEntry->entry.data.cluster );
 
@@ -814,7 +857,8 @@ void FolderMemoryCard::AddFolder( MemoryCardFileEntry* const dirEntry, const wxS
 		int entryNumber = 2; // include . and ..
 		hasNext = dir.GetFirst( &fileName );
 		while ( hasNext ) {
-			bool isFile = wxFile::Exists( wxFileName( dirPath, fileName ).GetFullPath() );
+			wxFileName fileInfo( dirPath, fileName );
+			bool isFile = wxFile::Exists( fileInfo.GetFullPath() );
 
 			if ( isFile ) {
 				if ( !fileName.StartsWith( L"_pcsx2_" ) ) {
@@ -823,11 +867,19 @@ void FolderMemoryCard::AddFolder( MemoryCardFileEntry* const dirEntry, const wxS
 				}
 			} else {
 				// is a subdirectory
+				wxDateTime creationTime, modificationTime;
+				fileInfo.AppendDir( fileInfo.GetFullName() );
+				fileInfo.SetName( L"" );
+				fileInfo.ClearExt();
+				fileInfo.GetTimes( NULL, &modificationTime, &creationTime );
+
 				// add entry for subdir in parent dir
 				MemoryCardFileEntry* newDirEntry = AppendFileEntryToDir( dirEntry );
 				dirEntry->entry.data.length++;
 				newDirEntry->entry.data.mode = 0x8427;
 				newDirEntry->entry.data.length = 2;
+				newDirEntry->entry.data.timeCreated.value = ConvertToMemoryCardTimestamp( creationTime );
+				newDirEntry->entry.data.timeModified.value = ConvertToMemoryCardTimestamp( modificationTime );
 				strcpy( (char*)&newDirEntry->entry.data.name[0], fileName.mbc_str() );
 
 				// create new cluster for . and .. entries
@@ -847,7 +899,7 @@ void FolderMemoryCard::AddFolder( MemoryCardFileEntry* const dirEntry, const wxS
 				subDirCluster->entries[1].entry.data.name[1] = '.';
 
 				// and add all files in subdir
-				AddFolder( newDirEntry, wxFileName( dirPath, fileName ).GetFullPath() );
+				AddFolder( newDirEntry, fileInfo.GetFullPath() );
 				++entryNumber;
 			}
 
@@ -863,13 +915,19 @@ void FolderMemoryCard::AddFile( MemoryCardFileEntry* const dirEntry, const wxStr
 
 	MemoryCardFileEntry* newFileEntry = AppendFileEntryToDir( dirEntry );
 
-	wxFFile file( wxFileName( dirPath, fileName ).GetFullPath(), L"r" );
+	wxFileName fileInfo( dirPath, fileName );
+	wxDateTime creationTime, modificationTime;
+	fileInfo.GetTimes( NULL, &modificationTime, &creationTime );
+
+	wxFFile file( fileInfo.GetFullPath(), L"r" );
 	if ( file.IsOpened() ) {
 		// set file entry data
 		const u32 filesize = file.Length();
 		memset( &newFileEntry->entry.raw[0], 0x00, 0x200 );
 		newFileEntry->entry.data.mode = 0x8497;
 		newFileEntry->entry.data.length = filesize;
+		newFileEntry->entry.data.timeCreated.value = ConvertToMemoryCardTimestamp( creationTime );
+		newFileEntry->entry.data.timeModified.value = ConvertToMemoryCardTimestamp( modificationTime );
 		u32 fileDataStartingCluster = GetFreeDataCluster();
 		newFileEntry->entry.data.cluster = fileDataStartingCluster;
 		strcpy( (char*)&newFileEntry->entry.data.name[0], fileName.mbc_str() );

@@ -1126,7 +1126,9 @@ s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 			memcpy( dest, src, dataLength );
 			Console.WriteLn( L"(FolderMcd) %02x %02x %02x %02x  %02x %02x %02x %02x", src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7] );
 		} else {
-			ReadFromFile( dest, adr, dataLength );
+			if ( !ReadFromFile( dest, adr, dataLength ) ) {
+				memset( dest, 0xFF, dataLength );
+			}
 		}
 	}
 
@@ -1141,7 +1143,9 @@ s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 		if ( src != nullptr ) {
 			memcpy( data, src, 0x200 );
 		} else {
-			ReadFromFile( data, adrStart, 0x200 );
+			if ( !ReadFromFile( data, adrStart, 0x200 ) ) {
+				memset( data, 0xFF, 0x200 );
+			}
 		}
 
 		u8 ecc[0x10];

@@ -563,7 +563,9 @@ protected:
 	// - searchCluster: the cluster that is being accessed, relative to alloc_offset in the superblock
 	// - fileName: wxFileName of the root directory of the memory card folder in the host file system (filename part doesn't matter)
 	// - originalDirCount: the point in fileName where to insert the found folder path, usually fileName->GetDirCount()
-	MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u32 currentCluster, const u32 searchCluster, wxFileName* fileName, const size_t originalDirCount );
+	// - outClusterNumber: the cluster's sequential number of the file will be written to this pointer,
+	//                     which can be used to calculate the in-file offset of the address being accessed
+	MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u32 currentCluster, const u32 searchCluster, wxFileName* fileName, const size_t originalDirCount, u32* outClusterNumber );
 
 
 	// loads files and folders from the host file system if a superblock exists in the root directory
@@ -601,6 +603,8 @@ protected:
 	// - fileName: the name of the file, without path
 	void AddFile( MemoryCardFileEntry* const dirEntry, const wxString& dirPath, const wxString& fileName );
 
+
+	bool ReadFromFile( u8 *dest, u32 adr, u32 dataLength );
 
 	wxString GetDisabledMessage(uint slot) const
 	{
@@ -986,17 +990,20 @@ u8* FolderMemoryCard::GetFileEntryPointer( const u32 currentCluster, const u32 s
 	return nullptr;
 }
 
-MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u32 currentCluster, const u32 searchCluster, wxFileName* fileName, const size_t originalDirCount ) {
+MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u32 currentCluster, const u32 searchCluster, wxFileName* fileName, const size_t originalDirCount, u32* outClusterNumber ) {
 	// check both entries of the current cluster if they're the file we're searching for, and if yes return it
 	for ( int i = 0; i < 2; ++i ) {
 		MemoryCardFileEntry* const entry = &m_fileEntryDict[currentCluster].entries[i];
 		if ( entry->IsUsed() && entry->IsFile() ) {
 			u32 fileCluster = entry->entry.data.cluster;
+			u32 clusterNumber = 0;
 			do {
 				if ( fileCluster == searchCluster ) {
 					fileName->SetName( wxString::FromAscii( (const char*)entry->entry.data.name ) );
+					*outClusterNumber = clusterNumber;
 					return entry;
 				}
+				++clusterNumber;
 			} while ( ( fileCluster = m_fat.data[0][0][fileCluster] & 0x7FFFFFFF ) != 0x7FFFFFFF );
 			// There's a lot of optimization work that can be done here, looping through all clusters of every single file
 			// is not very efficient, especially since files are going to be accessed from the start and in-order the vast
@@ -1010,7 +1017,7 @@ MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u3
 	// this can probably be solved more efficiently by looping through nextClusters instead of recursively calling
 	const u32 nextCluster = m_fat.data[0][0][currentCluster] & 0x7FFFFFFF;
 	if ( nextCluster != 0x7FFFFFFF ) {
-		MemoryCardFileEntry* ptr = GetFileEntryFromFileDataCluster( nextCluster, searchCluster, fileName, originalDirCount );
+		MemoryCardFileEntry* ptr = GetFileEntryFromFileDataCluster( nextCluster, searchCluster, fileName, originalDirCount, outClusterNumber );
 		if ( ptr != nullptr ) { return ptr; }
 	}
 
@@ -1018,7 +1025,7 @@ MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u3
 	for ( int i = 0; i < 2; ++i ) {
 		MemoryCardFileEntry* const entry = &m_fileEntryDict[currentCluster].entries[i];
 		if ( entry->IsUsed() && entry->IsDir() && entry->entry.data.cluster != 0 ) {
-			MemoryCardFileEntry* ptr = GetFileEntryFromFileDataCluster( entry->entry.data.cluster, searchCluster, fileName, originalDirCount );
+			MemoryCardFileEntry* ptr = GetFileEntryFromFileDataCluster( entry->entry.data.cluster, searchCluster, fileName, originalDirCount, outClusterNumber );
 			if ( ptr != nullptr ) {
 				fileName->InsertDir( originalDirCount, wxString::FromAscii( (const char*)entry->entry.data.name ) );
 				return ptr;
@@ -1027,6 +1034,46 @@ MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u3
 	}
 
 	return nullptr;
+}
+
+bool FolderMemoryCard::ReadFromFile( u8 *dest, u32 adr, u32 dataLength ) {
+	const u32 page = adr / 0x210u;
+	const u32 offset = adr % 0x210u;
+	const u32 cluster = adr / 0x420u;
+	const u32 fatCluster = cluster - superBlock.data.alloc_offset;
+
+	// figure out which file to read from
+	wxFileName fileName( folderName );
+	u32 clusterNumber;
+	const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataCluster( superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount(), &clusterNumber );
+	if ( entry != nullptr ) {
+		Console.WriteLn( L"(FolderMcd) Reading from %s", fileName.GetFullPath().c_str() );
+		if ( !fileName.DirExists() ) {
+			fileName.Mkdir();
+		}
+		wxFFile file( fileName.GetFullPath(), L"r" );
+		if ( file.IsOpened() ) {
+			const u32 clusterOffset = ( page % 2 ) * 0x200u + offset;
+			const u32 fileOffset = clusterNumber * 0x400u + clusterOffset;
+			Console.WriteLn( L"(FolderMcd) Reading %03d bytes at %08x, corresponds to cluster %d offset %03x or file offset %06x", dataLength, adr, clusterNumber, clusterOffset, fileOffset );
+
+			file.Seek( fileOffset );
+			size_t bytesRead = file.Read( dest, dataLength );
+
+			// if more bytes were requested than actually exist, fill the rest with 0xFF
+			if ( bytesRead < dataLength ) {
+				memset( &dest[bytesRead], 0xFF, dataLength - bytesRead );
+			}
+
+			file.Close();
+
+			return bytesRead > 0;
+		}
+	} else {
+		Console.WriteLn( L"(FolderMcd) Reading nothing???" );
+	}
+
+	return false;
 }
 
 s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
@@ -1079,8 +1126,7 @@ s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 			memcpy( dest, src, dataLength );
 			Console.WriteLn( L"(FolderMcd) %02x %02x %02x %02x  %02x %02x %02x %02x", src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7] );
 		} else {
-			// figure out which file to write to
-			// TODO: Implement
+			ReadFromFile( dest, adr, dataLength );
 		}
 	}
 
@@ -1165,7 +1211,8 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 			// figure out which file to write to
 			const u32 fatCluster = cluster - superBlock.data.alloc_offset;
 			wxFileName fileName( folderName );
-			const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataCluster( superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount() );
+			u32 clusterNumber;
+			const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataCluster( superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount(), &clusterNumber );
 			if ( entry != nullptr ) {
 				Console.WriteLn( L"(FolderMcd) Writing to %s", fileName.GetFullPath().c_str() );
 				if ( !fileName.DirExists() ) {

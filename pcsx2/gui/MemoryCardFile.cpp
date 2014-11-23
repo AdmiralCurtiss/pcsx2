@@ -1052,7 +1052,7 @@ bool FolderMemoryCard::ReadFromFile( u8 *dest, u32 adr, u32 dataLength ) {
 		if ( !fileName.DirExists() ) {
 			fileName.Mkdir();
 		}
-		wxFFile file( fileName.GetFullPath(), L"r" );
+		wxFFile file( fileName.GetFullPath(), L"rb" );
 		if ( file.IsOpened() ) {
 			const u32 clusterOffset = ( page % 2 ) * 0x200u + offset;
 			const u32 fileOffset = clusterNumber * 0x400u + clusterOffset;

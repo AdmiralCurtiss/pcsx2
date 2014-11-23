@@ -1134,15 +1134,21 @@ s32 FolderMemoryCard::Read(u8 *dest, u32 adr, int size)
 		// is trying to (partially) read the ECC
 		const u32 eccOffset = 0x200u - offset;
 		const u32 eccLength = std::min( size - offset, 0x10u );
-		u8 ecc[0x10];
+		const u32 adrStart = page * 0x210u;
+		
+		u8 data[0x200];
+		u8* src = GetSystemBlockPointer( adrStart );
+		if ( src != nullptr ) {
+			memcpy( data, src, 0x200 );
+		} else {
+			ReadFromFile( data, adrStart, 0x200 );
+		}
 
-		// TODO: Calculate checksum and place into ecc
+		u8 ecc[0x10];
 		memset( ecc, 0xFF, 0x10 );
 
-		if ( block == 0 ) {
-			for ( int i = 0; i < 4; ++i ) {
-				FolderMemoryCard::CalculateECC( ecc + ( i * 3 ), superBlock.raw + ( page * 0x200u ) + ( i * 0x80 ) );
-			}
+		for ( int i = 0; i < 4; ++i ) {
+			FolderMemoryCard::CalculateECC( ecc + ( i * 3 ), &data[i * 0x80] );
 		}
 		
 		memcpy( dest + eccOffset, ecc, eccLength );

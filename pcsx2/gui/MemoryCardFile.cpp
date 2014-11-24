@@ -1128,11 +1128,8 @@ bool FolderMemoryCard::ReadFromFile( u8 *dest, u32 adr, u32 dataLength ) {
 	wxFileName fileName( folderName );
 	u32 clusterNumber;
 	const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataCluster( superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount(), &clusterNumber );
-	if ( entry != nullptr ) {
+	if ( entry != nullptr && fileName.FileExists() ) {
 		Console.WriteLn( L"(FolderMcd) Reading from %s", fileName.GetFullPath().c_str() );
-		if ( !fileName.DirExists() ) {
-			fileName.Mkdir();
-		}
 		wxFFile file( fileName.GetFullPath(), L"rb" );
 		if ( file.IsOpened() ) {
 			const u32 clusterOffset = ( page % 2 ) * 0x200u + offset;
@@ -1344,7 +1341,9 @@ bool FolderMemoryCard::WriteToFile( const u8* src, u32 adr, u32 dataLength, bool
 	wxFileName fileName( folderName );
 	u32 clusterNumber;
 	const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataCluster( superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount(), &clusterNumber );
-	if ( entry != nullptr ) {
+
+	// if entry length is 0, someone wrote the file entry but didn't know the filesize yet, act as if the entry doesn't exist
+	if ( entry != nullptr && entry->entry.data.length > 0 ) {
 		Console.WriteLn( L"(FolderMcd) Writing to file: %s", fileName.GetFullPath().c_str() );
 		if ( !fileName.DirExists() ) {
 			fileName.Mkdir();

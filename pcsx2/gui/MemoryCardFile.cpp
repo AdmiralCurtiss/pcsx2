@@ -1305,6 +1305,10 @@ bool FolderMemoryCard::WriteToFile( const u8* src, u32 adr, u32 dataLength ) {
 		if ( !fileName.DirExists() ) {
 			fileName.Mkdir();
 		}
+		if ( !fileName.FileExists() ) {
+			wxFFile createEmptyFile( fileName.GetFullPath(), L"wb" );
+			createEmptyFile.Close();
+		}
 		wxFFile file( fileName.GetFullPath(), L"r+b" );
 		if ( file.IsOpened() ) {
 			const u32 clusterOffset = ( page % 2 ) * 0x200u + offset;

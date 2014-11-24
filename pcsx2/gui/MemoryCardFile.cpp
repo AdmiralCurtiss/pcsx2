@@ -575,7 +575,10 @@ protected:
 	// - entryNumber: page of cluster
 	// - offset: offset of page
 	u8* GetFileEntryPointer( const u32 currentCluster, const u32 searchCluster, const u32 entryNumber, const u32 offset );
-	
+
+	// convenience function for just calling it from the memory card adr
+	u8* GetFileEntryPointer( const u32 adr );
+
 	// returns file entry of the file at the given searchCluster
 	// the passed fileName will be filled with a path to the file being accessed
 	// returns nullptr if searchCluster contains no file
@@ -1027,6 +1030,14 @@ u8* FolderMemoryCard::GetSystemBlockPointer( const u32 adr ) {
 	return src;
 }
 
+u8* FolderMemoryCard::GetFileEntryPointer( const u32 adr ) {
+	const u32 page = adr / 0x210u;
+	const u32 offset = adr % 0x210u;
+	const u32 cluster = adr / 0x420u;
+	const u32 fatCluster = cluster - superBlock.data.alloc_offset;
+	return GetFileEntryPointer( superBlock.data.rootdir_cluster, fatCluster, page % 2, offset );
+}
+
 u8* FolderMemoryCard::GetFileEntryPointer( const u32 currentCluster, const u32 searchCluster, const u32 entryNumber, const u32 offset ) {
 	// we found the correct cluster, return pointer to it
 	if ( currentCluster == searchCluster ) {
@@ -1264,6 +1275,9 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 		}
 
 		u8* dest = GetSystemBlockPointer( adr );
+		if ( dest == nullptr ) {
+			dest = GetFileEntryPointer( adr );
+		}
 		if ( dest != nullptr ) {
 			memcpy( dest, src, dataLength );
 			Console.WriteLn( L"(FolderMcd) %02x %02x %02x %02x  %02x %02x %02x %02x", src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7] );

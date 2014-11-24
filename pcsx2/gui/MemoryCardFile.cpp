@@ -499,6 +499,10 @@ struct MemoryCardFileEntryCluster {
 	MemoryCardFileEntry entries[2];
 };
 
+struct MemoryCardDataChunk {
+	u8 data[0x80];
+};
+
 // --------------------------------------------------------------------------------------
 //  FolderMemoryCard
 // --------------------------------------------------------------------------------------
@@ -530,6 +534,7 @@ protected:
 	} m_backupBlock2;
 
 	std::map<u32, MemoryCardFileEntryCluster> m_fileEntryDict;
+	std::map<u32, MemoryCardDataChunk> m_unmappedData;
 
 	uint slot;
 	bool formatted = false;
@@ -631,7 +636,9 @@ protected:
 
 
 	bool ReadFromFile( u8 *dest, u32 adr, u32 dataLength );
-	bool WriteToFile( const u8* src, u32 adr, u32 dataLength );
+	bool WriteToFile( const u8* src, u32 adr, u32 dataLength, bool saveUnmappedDataForLater = true );
+
+	void FlushUnmappedData();
 
 	wxString GetDisabledMessage(uint slot) const
 	{
@@ -703,6 +710,8 @@ void FolderMemoryCard::Close() {
 			superBlockFile.Write( &superBlock.raw, sizeof( superBlock.raw ) );
 		}
 	}
+
+	FlushUnmappedData();
 }
 
 void FolderMemoryCard::LoadMemoryCardData() {
@@ -1143,7 +1152,14 @@ bool FolderMemoryCard::ReadFromFile( u8 *dest, u32 adr, u32 dataLength ) {
 			return bytesRead > 0;
 		}
 	} else {
-		Console.WriteLn( L"(FolderMcd) Reading nothing???" );
+		auto it = m_unmappedData.find( adr );
+		if ( it != m_unmappedData.end() ) {
+			Console.WriteLn( L"(FolderMcd) Reading from unmapped data." );
+			memcpy( dest, it->second.data, 0x80u );
+			return true;
+		} else {
+			Console.WriteLn( L"(FolderMcd) Reading nothing???" );
+		}
 	}
 
 	return false;
@@ -1274,6 +1290,12 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 			return 1;
 		}
 
+		// if it's trying to write to the same adr as some unmapped data we got before, erase our unmapped data, so we don't later overwrite newer with older data
+		auto it = m_unmappedData.find( adr );
+		if ( it != m_unmappedData.end() ) {
+			m_unmappedData.erase( it );
+		}
+
 		u8* dest = GetSystemBlockPointer( adr );
 		if ( dest == nullptr ) {
 			dest = GetFileEntryPointer( adr );
@@ -1312,7 +1334,7 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 	return 1;
 }
 
-bool FolderMemoryCard::WriteToFile( const u8* src, u32 adr, u32 dataLength ) {
+bool FolderMemoryCard::WriteToFile( const u8* src, u32 adr, u32 dataLength, bool saveUnmappedDataForLater ) {
 	const u32 cluster = adr / 0x420u;
 	const u32 page = adr / 0x210u;
 	const u32 offset = adr % 0x210u;
@@ -1359,10 +1381,32 @@ bool FolderMemoryCard::WriteToFile( const u8* src, u32 adr, u32 dataLength ) {
 			return true;
 		}
 	} else {
-		Console.WriteLn( L"(FolderMcd) Writing to nothing???" );
+		if ( saveUnmappedDataForLater ) {
+			Console.WriteLn( L"(FolderMcd) Writing to nothing, save for later." );
+			Console.WriteLn( L"(FolderMcd) %02x %02x %02x %02x  %02x %02x %02x %02x", src[0], src[1], src[2], src[3], src[4], src[5], src[6], src[7] );
+
+			MemoryCardDataChunk* const chunk = &m_unmappedData[adr];
+			if ( dataLength != 0x80 ) {
+				Console.Warning( L"(FolderMcd) Unmapped write over or under 0x80 bytes, this is not supported!" );
+				return false;
+			}
+			memcpy( chunk->data, src, dataLength );
+		}
 	}
 
 	return false;
+}
+
+void FolderMemoryCard::FlushUnmappedData() {
+	for ( auto it = m_unmappedData.begin(); it != m_unmappedData.end(); ) {
+		const u32 adr = it->first;
+		MemoryCardDataChunk* const chunk = &it->second;
+		if ( WriteToFile( chunk->data, adr, 0x80u, false ) ) {
+			it = m_unmappedData.erase( it );
+		} else {
+			++it;
+		}
+	}
 }
 
 s32 FolderMemoryCard::EraseBlock(u32 adr)

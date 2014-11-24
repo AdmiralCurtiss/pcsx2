@@ -524,7 +524,10 @@ protected:
 		u8 raw[IndirectFatClusterCount][ClusterSize / 4][ClusterSize];
 	} m_fat;
 	u8 m_backupBlock1[0x2000];
-	u8 m_backupBlock2[0x2000];
+	union backupBlock2Union {
+		u32 value;
+		u8 raw[0x2000];
+	} m_backupBlock2;
 
 	std::map<u32, MemoryCardFileEntryCluster> m_fileEntryDict;
 
@@ -1000,7 +1003,7 @@ u8* FolderMemoryCard::GetSystemBlockPointer( const u32 adr ) {
 	} else if ( formatted && block == superBlock.data.backup_block1 ) {
 		src = &m_backupBlock1[( page % 16 ) * 0x200u + offset];
 	} else if ( formatted && block == superBlock.data.backup_block2 ) {
-		src = &m_backupBlock2[( page % 16 ) * 0x200u + offset];
+		src = &m_backupBlock2.raw[( page % 16 ) * 0x200u + offset];
 	} else if ( formatted ) {
 		// trying to access indirect FAT?
 		for ( int i = 0; i < IndirectFatClusterCount; ++i ) {
@@ -1255,6 +1258,11 @@ s32 FolderMemoryCard::Save(const u8 *src, u32 adr, int size)
 			}
 		}
 
+		// if backup block 2 claims that the currently accessed block is being written, ignore the writes to do them sequentially later
+		if ( m_backupBlock2.value == ( block | 0x80000000 ) ) {
+			return 1;
+		}
+
 		u8* dest = GetSystemBlockPointer( adr );
 		if ( dest != nullptr ) {
 			memcpy( dest, src, dataLength );
@@ -1352,6 +1360,20 @@ s32 FolderMemoryCard::EraseBlock(u32 adr)
 		// fake all access
 		m_fakeFormattingData = 0xFF;
 		return 1;
+	}
+
+	// if backup block 2 is erased, first write all the data in backup block 1 to where it belongs, sequentially
+	if ( formatted && block == superBlock.data.backup_block2 ) {
+		const u32 blockToWrite = m_backupBlock2.value & 0x7FFFFFFF;
+		m_backupBlock2.value = 0xFFFFFFFF;
+		for ( int page = 0; page < 16; ++page ) {
+			const u32 adr = blockToWrite * 0x2100 + page * 0x210;
+			for ( int i = 0; i < 4; ++i ) {
+				const u32 backupBlockOffset = page * 0x200 + i * 0x80;
+				const u32 adrOffset = i * 0x80;
+				Save( &m_backupBlock1[backupBlockOffset], adr + adrOffset, 0x80 );
+			}
+		}
 	}
 
 	for ( int page = 0; page < 16; ++page ) {

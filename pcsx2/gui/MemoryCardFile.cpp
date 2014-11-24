@@ -1318,6 +1318,15 @@ bool FolderMemoryCard::WriteToFile( const u8* src, u32 adr, u32 dataLength ) {
 			const u32 bytesToWrite = fileOffsetEnd - fileOffsetStart;
 			Console.WriteLn( L"(FolderMcd) Writing %03d bytes at %08x, corresponds to cluster %d offset %03x or file offset %06x", bytesToWrite, adr, clusterNumber, clusterOffset, fileOffsetStart );
 
+			wxFileOffset actualFileSize = file.Length();
+			if ( actualFileSize < fileOffsetStart ) {
+				const u32 diff = fileOffsetStart - actualFileSize;
+				u8 temp = 0xFF;
+				for ( u32 i = 0; i < diff; ++i ) {
+					file.Write( &temp, 1 );
+				}
+			}
+
 			file.Seek( fileOffsetStart );
 			if ( bytesToWrite > 0 ) {
 				file.Write( src, bytesToWrite );

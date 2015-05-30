@@ -660,6 +660,7 @@
     <ClCompile Include="..\..\gui\Dialogs\BaseConfigurationDialog.cpp" />
     <ClCompile Include="..\..\gui\Dialogs\BiosSelectorDialog.cpp" />
     <ClCompile Include="..\..\gui\Dialogs\ConfirmationDialogs.cpp" />
+    <ClCompile Include="..\..\gui\Dialogs\ConvertMemoryCardDialog.cpp" />
     <ClCompile Include="..\..\gui\Dialogs\CreateMemoryCardDialog.cpp" />
     <ClCompile Include="..\..\gui\Dialogs\FirstTimeWizard.cpp" />
     <ClCompile Include="..\..\gui\Dialogs\ImportSettingsDialog.cpp" />

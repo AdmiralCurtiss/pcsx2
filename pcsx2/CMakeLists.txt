@@ -273,6 +273,7 @@ set(pcsx2GuiSources
 	gui/Dialogs/BaseConfigurationDialog.cpp
 	gui/Dialogs/BiosSelectorDialog.cpp
 	gui/Dialogs/ConfirmationDialogs.cpp
+	gui/Dialogs/ConvertMemoryCardDialog.cpp
 	gui/Dialogs/CreateMemoryCardDialog.cpp
 	gui/Dialogs/FirstTimeWizard.cpp
 	gui/Dialogs/GameDatabaseDialog.cpp

@@ -282,6 +282,17 @@ protected:
 	//                     which can be used to calculate the in-file offset of the address being accessed
 	MemoryCardFileEntry* GetFileEntryFromFileDataCluster( const u32 currentCluster, const u32 searchCluster, wxFileName* fileName, const size_t originalDirCount, u32* outClusterNumber );
 
+	// same as GetFileEntryFromFileDataCluster but tries to cache the result so in-order file access is faster
+	MemoryCardFileEntry* GetFileEntryFromFileDataClusterCached( const u32 currentCluster, const u32 searchCluster, wxFileName* fileName, const size_t originalDirCount, u32* outClusterNumber );
+
+	u32 m_cachedFileEntry_currentCluster;
+	u32 m_cachedFileEntry_searchCluster;
+	wxFileName m_cachedFileEntry_fileName;
+	u32 m_cachedFileEntry_clusterNumber;
+	u32 m_cachedFileEntry_index;
+	bool m_cachedFileEntry_exists = false;
+
+
 
 	// loads files and folders from the host file system if a superblock exists in the root directory
 	// - enableFiltering: if set to true, only folders whose name contain the filter string are loaded

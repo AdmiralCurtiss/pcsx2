@@ -40,6 +40,7 @@ void FolderMemoryCard::InitializeInternalData() {
 	m_isEnabled = false;
 	m_framesUntilFlush = 0;
 	m_lastAccessedFile.Close();
+	m_cachedFileEntry_exists = false;
 }
 
 bool FolderMemoryCard::IsFormatted() {
@@ -543,6 +544,17 @@ MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u3
 				if ( fileCluster == searchCluster ) {
 					fileName->SetName( wxString::FromAscii( (const char*)entry->entry.data.name ) );
 					*outClusterNumber = clusterNumber;
+
+
+
+					m_cachedFileEntry_currentCluster = currentCluster;
+					m_cachedFileEntry_searchCluster = searchCluster;
+					m_cachedFileEntry_clusterNumber = clusterNumber;
+					m_cachedFileEntry_index = i;
+
+
+
+
 					return entry;
 				}
 				++clusterNumber;
@@ -578,6 +590,44 @@ MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataCluster( const u3
 	return nullptr;
 }
 
+MemoryCardFileEntry* FolderMemoryCard::GetFileEntryFromFileDataClusterCached( const u32 currentCluster, const u32 searchCluster, wxFileName* fileName, const size_t originalDirCount, u32* outClusterNumber ) {
+	if ( m_cachedFileEntry_exists ) {
+		// try cached values
+		MemoryCardFileEntry* const entry = &m_fileEntryDict[m_cachedFileEntry_currentCluster].entries[m_cachedFileEntry_index];
+		if ( entry->IsValid() && entry->IsUsed() && entry->IsFile() ) {
+			u32 fileCluster = m_cachedFileEntry_searchCluster;
+			u32 clusterNumber = m_cachedFileEntry_clusterNumber;
+			do {
+				if ( fileCluster == searchCluster ) {
+					fileName->Assign( m_cachedFileEntry_fileName );
+					*outClusterNumber = clusterNumber;
+
+					// remember changed stuff
+					m_cachedFileEntry_clusterNumber = clusterNumber;
+					m_cachedFileEntry_searchCluster = fileCluster;
+
+					return entry;
+				}
+				++clusterNumber;
+			} while ( ( fileCluster = m_fat.data[0][0][fileCluster] & 0x7FFFFFFF ) != 0x7FFFFFFF );
+		}
+	}
+
+
+	// cache didn't find it, use regular method
+	MemoryCardFileEntry* entryUncached = GetFileEntryFromFileDataCluster( currentCluster, searchCluster, fileName, originalDirCount, outClusterNumber );
+	
+	if ( entryUncached ) {
+		// remember filename for later
+		m_cachedFileEntry_fileName = *fileName;
+		m_cachedFileEntry_exists = true;
+	} else {
+		m_cachedFileEntry_exists = false;
+	}
+
+	return entryUncached;
+}
+
 bool FolderMemoryCard::ReadFromFile( u8 *dest, u32 adr, u32 dataLength ) {
 	const u32 page = adr / PageSizeRaw;
 	const u32 offset = adr % PageSizeRaw;
@@ -587,7 +637,7 @@ bool FolderMemoryCard::ReadFromFile( u8 *dest, u32 adr, u32 dataLength ) {
 	// figure out which file to read from
 	wxFileName fileName( m_folderName );
 	u32 clusterNumber;
-	const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataCluster( m_superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount(), &clusterNumber );
+	const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataClusterCached( m_superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount(), &clusterNumber );
 	if ( entry != nullptr ) {
 		if ( !fileName.DirExists() ) {
 			fileName.Mkdir();
@@ -877,7 +927,7 @@ bool FolderMemoryCard::WriteToFile( const u8* src, u32 adr, u32 dataLength ) {
 	// figure out which file to write to
 	wxFileName fileName( m_folderName );
 	u32 clusterNumber;
-	const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataCluster( m_superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount(), &clusterNumber );
+	const MemoryCardFileEntry* const entry = GetFileEntryFromFileDataClusterCached( m_superBlock.data.rootdir_cluster, fatCluster, &fileName, fileName.GetDirCount(), &clusterNumber );
 	if ( entry != nullptr ) {
 		if ( !fileName.DirExists() ) {
 			fileName.Mkdir();

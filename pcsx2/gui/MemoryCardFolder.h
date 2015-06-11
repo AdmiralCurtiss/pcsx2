@@ -131,6 +131,19 @@ struct MemoryCardPage {
 };
 #pragma pack(pop)
 
+#pragma pack(push, 1)
+struct MemoryCardFatClusterNumber {
+	static const u32 LastClusterOfData = 0x7FFFFFFFu;
+	union {
+		struct {
+			u32 cluster : 31;
+			u32 used    :  1;
+		} data;
+		u32 raw;
+	};
+};
+#pragma pack(pop)
+
 // --------------------------------------------------------------------------------------
 //  MemoryCardFileMetadataReference
 // --------------------------------------------------------------------------------------
@@ -199,7 +212,7 @@ protected:
 		u8 raw[IndirectFatClusterCount][ClusterSize];
 	} m_indirectFat;
 	union fatUnion {
-		u32 data[IndirectFatClusterCount][ClusterSize / 4][ClusterSize / 4];
+		MemoryCardFatClusterNumber data[IndirectFatClusterCount][ClusterSize / 4][ClusterSize / 4];
 		u8 raw[IndirectFatClusterCount][ClusterSize / 4][ClusterSize];
 	} m_fat;
 	u8 m_backupBlock1[BlockSize];

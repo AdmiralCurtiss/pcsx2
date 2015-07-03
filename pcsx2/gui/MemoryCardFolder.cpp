@@ -100,12 +100,6 @@ void FolderMemoryCard::Close() {
 
 	Flush();
 
-	wxFileName superBlockFileName( m_folderName.GetPath(), L"_pcsx2_superblock" );
-	wxFFile superBlockFile( superBlockFileName.GetFullPath().c_str(), L"wb" );
-	if ( superBlockFile.IsOpened() ) {
-		superBlockFile.Write( &m_superBlock.raw, sizeof( m_superBlock.raw ) );
-	}
-
 	m_cache.clear();
 	m_oldDataCache.clear();
 	m_fileMetadataQuickAccess.clear();
@@ -841,7 +835,7 @@ void FolderMemoryCard::Flush() {
 	}
 
 	// first write the superblock if necessary
-	FlushBlock( 0 );
+	FlushSuperBlock();
 	if ( !IsFormatted() ) { return; }
 
 	// check if we were interrupted in the middle of a save operation, if yes abort
@@ -890,24 +884,40 @@ void FolderMemoryCard::Flush() {
 	Console.WriteLn( L"(FolderMcd) Done! Took %u ms.", timeFlushEnd - timeFlushStart );
 }
 
-void FolderMemoryCard::FlushPage( const u32 page ) {
+bool FolderMemoryCard::FlushPage( const u32 page ) {
 	auto it = m_cache.find( page );
 	if ( it != m_cache.end() ) {
 		WriteWithoutCache( &it->second.raw[0], page * PageSizeRaw, PageSize );
 		m_cache.erase( it );
+		return true;
 	}
+	return false;
 }
 
-void FolderMemoryCard::FlushCluster( const u32 cluster ) {
+bool FolderMemoryCard::FlushCluster( const u32 cluster ) {
 	const u32 page = cluster * 2;
-	FlushPage( page );
-	FlushPage( page + 1 );
+	bool flushed = false;
+	if ( FlushPage( page ) ) { flushed = true; }
+	if ( FlushPage( page + 1 ) ) { flushed = true; }
+	return flushed;
 }
 
-void FolderMemoryCard::FlushBlock( const u32 block ) {
+bool FolderMemoryCard::FlushBlock( const u32 block ) {
 	const u32 page = block * 16;
+	bool flushed = false;
 	for ( int i = 0; i < 16; ++i ) {
-		FlushPage( page + i );
+		if ( FlushPage( page + i ) ) { flushed = true; }
+	}
+	return flushed;
+}
+
+void FolderMemoryCard::FlushSuperBlock() {
+	if ( FlushBlock( 0 ) ) {
+		wxFileName superBlockFileName( m_folderName.GetPath(), L"_pcsx2_superblock" );
+		wxFFile superBlockFile( superBlockFileName.GetFullPath().c_str(), L"wb" );
+		if ( superBlockFile.IsOpened() ) {
+			superBlockFile.Write( &m_superBlock.raw, sizeof( m_superBlock.raw ) );
+		}
 	}
 }
 

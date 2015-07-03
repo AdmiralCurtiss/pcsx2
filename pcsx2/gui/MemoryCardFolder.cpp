@@ -38,6 +38,7 @@ void FolderMemoryCard::InitializeInternalData() {
 	memset( &m_backupBlock1, 0xFF, sizeof( m_backupBlock1 ) );
 	memset( &m_backupBlock2, 0xFF, sizeof( m_backupBlock2 ) );
 	m_cache.clear();
+	m_oldDataCache.clear();
 	m_fileMetadataQuickAccess.clear();
 	m_timeLastWritten = 0;
 	m_isEnabled = false;
@@ -106,6 +107,7 @@ void FolderMemoryCard::Close() {
 	}
 
 	m_cache.clear();
+	m_oldDataCache.clear();
 	m_fileMetadataQuickAccess.clear();
 	m_lastAccessedFile.Close();
 }
@@ -795,6 +797,7 @@ s32 FolderMemoryCard::Save( const u8 *src, u32 adr, int size ) {
 			cachePage = &m_cache[page];
 			const u32 adrLoad = page * PageSizeRaw;
 			ReadDataWithoutCache( &cachePage->raw[0], adrLoad, PageSize );
+			memcpy( &m_oldDataCache[page].raw[0], &cachePage->raw[0], PageSize );
 		} else {
 			cachePage = &it->second;
 		}
@@ -820,6 +823,16 @@ void FolderMemoryCard::Flush() {
 
 	Console.WriteLn( L"(FolderMcd) Writing data for slot %u to file system...", m_slot );
 	const u64 timeFlushStart = wxGetLocalTimeMillis().GetValue();
+
+	// Remove (== don't flush) all memory card pages that haven't actually changed.
+	for ( auto oldIt = m_oldDataCache.begin(); oldIt != m_oldDataCache.end(); ++oldIt ) {
+		auto newIt = m_cache.find( oldIt->first );
+		assert( newIt != m_cache.end() ); // if this isn't true something broke somewhere, the two maps should always contain the same pages
+		if ( memcmp( &oldIt->second.raw[0], &newIt->second.raw[0], PageSize ) == 0 ) {
+			m_cache.erase( newIt );
+		}
+	}
+	m_oldDataCache.clear();
 
 	// Keep a copy of the old file entries so we can figure out which files and directories, if any, have been deleted from the memory card.
 	std::vector<MemoryCardFileEntryTreeNode> oldFileEntryTree;

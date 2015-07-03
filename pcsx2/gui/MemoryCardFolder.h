@@ -254,6 +254,10 @@ protected:
 
 	// holds a copy of modified pages of the memory card before they're flushed to the file system
 	std::map<u32, MemoryCardPage> m_cache;
+	// contains the state of how the data looked before the first write to it
+	// used to reduce the amount of disk I/O by not re-writing unchanged data that just happened to be
+	// touched in memory due to how actual physical memory cards have to erase and rewrite in blocks
+	std::map<u32, MemoryCardPage> m_oldDataCache;
 	// if > 0, the amount of frames until data is flushed to the file system
 	// reset to FramesAfterWriteUntilFlush on each write
 	int m_framesUntilFlush;

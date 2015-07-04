@@ -84,6 +84,14 @@ struct MemoryCardFileEntryDateTime {
 
 		return t;
 	}
+
+	bool operator==( const MemoryCardFileEntryDateTime& other ) const {
+		return unused == other.unused && second == other.second && minute == other.minute && hour == other.hour
+		    && day == other.day && month == other.month && year == other.year;
+	}
+	bool operator!=( const MemoryCardFileEntryDateTime& other ) const {
+		return !( *this == other );
+	}
 };
 #pragma pack(pop)
 
@@ -438,13 +446,18 @@ protected:
 	void FlushFileEntries( const u32 dirCluster, const u32 remainingFiles, const wxString& dirPath = L"", MemoryCardFileMetadataReference* parent = nullptr );
 
 	// "delete" (prepend '_pcsx2_deleted_' to) any files that exist in oldFileEntries but no longer exist in m_fileEntryDict
-	void FlushDeletedFiles( const std::vector<MemoryCardFileEntryTreeNode>& oldFileEntries );
+	// also calls RemoveUnchangedDataFromCache() since both operate on comparing with the old file entires
+	void FlushDeletedFilesAndRemoveUnchangedDataFromCache( const std::vector<MemoryCardFileEntryTreeNode>& oldFileEntries );
 
 	// recursive worker method of the above
 	// - newCluster: Current directory dotdir cluster of the new entries.
 	// - newFileCount: Number of file entries in the new directory.
 	// - dirPath: Path to the current directory relative to the root of the memcard. Must be identical for both entries.
-	void FlushDeletedFiles( const std::vector<MemoryCardFileEntryTreeNode>& oldFileEntries, const u32 newCluster, const u32 newFileCount, const wxString& dirPath );
+	void FlushDeletedFilesAndRemoveUnchangedDataFromCache( const std::vector<MemoryCardFileEntryTreeNode>& oldFileEntries, const u32 newCluster, const u32 newFileCount, const wxString& dirPath );
+
+	// try and remove unchanged data from m_cache
+	// oldEntry and newEntry should be equivalent entries found by FindEquivalent()
+	void RemoveUnchangedDataFromCache( const MemoryCardFileEntry* const oldEntry, const MemoryCardFileEntry* const newEntry );
 
 	// write data as Save() normally would, but ignore the cache; used for flushing
 	s32 WriteWithoutCache( const u8 *src, u32 adr, int size );

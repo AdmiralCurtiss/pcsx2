@@ -818,16 +818,6 @@ void FolderMemoryCard::Flush() {
 	Console.WriteLn( L"(FolderMcd) Writing data for slot %u to file system...", m_slot );
 	const u64 timeFlushStart = wxGetLocalTimeMillis().GetValue();
 
-	// Remove (== don't flush) all memory card pages that haven't actually changed.
-	for ( auto oldIt = m_oldDataCache.begin(); oldIt != m_oldDataCache.end(); ++oldIt ) {
-		auto newIt = m_cache.find( oldIt->first );
-		assert( newIt != m_cache.end() ); // if this isn't true something broke somewhere, the two maps should always contain the same pages
-		if ( memcmp( &oldIt->second.raw[0], &newIt->second.raw[0], PageSize ) == 0 ) {
-			m_cache.erase( newIt );
-		}
-	}
-	m_oldDataCache.clear();
-
 	// Keep a copy of the old file entries so we can figure out which files and directories, if any, have been deleted from the memory card.
 	std::vector<MemoryCardFileEntryTreeNode> oldFileEntryTree;
 	if ( IsFormatted() ) {
@@ -871,7 +861,7 @@ void FolderMemoryCard::Flush() {
 	FlushFileEntries();
 
 	// Now we have the new file system, compare it to the old one and "delete" any files that were in it before but aren't anymore.
-	FlushDeletedFiles( oldFileEntryTree );
+	FlushDeletedFilesAndRemoveUnchangedDataFromCache( oldFileEntryTree );
 
 	// and finally, flush everything that hasn't been flushed yet
 	for ( uint i = 0; i < pageCount; ++i ) {
@@ -879,6 +869,7 @@ void FolderMemoryCard::Flush() {
 	}
 
 	m_lastAccessedFile.Close();
+	m_oldDataCache.clear();
 
 	const u64 timeFlushEnd = wxGetLocalTimeMillis().GetValue();
 	Console.WriteLn( L"(FolderMcd) Done! Took %u ms.", timeFlushEnd - timeFlushStart );
@@ -982,14 +973,14 @@ void FolderMemoryCard::FlushFileEntries( const u32 dirCluster, const u32 remaini
 	}
 }
 
-void FolderMemoryCard::FlushDeletedFiles( const std::vector<MemoryCardFileEntryTreeNode>& oldFileEntries ) {
+void FolderMemoryCard::FlushDeletedFilesAndRemoveUnchangedDataFromCache( const std::vector<MemoryCardFileEntryTreeNode>& oldFileEntries ) {
 	const u32 newRootDirCluster = m_superBlock.data.rootdir_cluster;
 	const u32 newFileCount = m_fileEntryDict[newRootDirCluster].entries[0].entry.data.length;
 	wxString path = L"";
-	FlushDeletedFiles( oldFileEntries, newRootDirCluster, newFileCount, path );
+	FlushDeletedFilesAndRemoveUnchangedDataFromCache( oldFileEntries, newRootDirCluster, newFileCount, path );
 }
 
-void FolderMemoryCard::FlushDeletedFiles( const std::vector<MemoryCardFileEntryTreeNode>& oldFileEntries, const u32 newCluster, const u32 newFileCount, const wxString& dirPath ) {
+void FolderMemoryCard::FlushDeletedFilesAndRemoveUnchangedDataFromCache( const std::vector<MemoryCardFileEntryTreeNode>& oldFileEntries, const u32 newCluster, const u32 newFileCount, const wxString& dirPath ) {
 	// go through all file entires of the current directory of the old data
 	for ( auto it = oldFileEntries.cbegin(); it != oldFileEntries.cend(); ++it ) {
 		const MemoryCardFileEntry* entry = &it->entry;
@@ -1016,9 +1007,42 @@ void FolderMemoryCard::FlushDeletedFiles( const std::vector<MemoryCardFileEntryT
 				FileAccessHelper::CleanMemcardFilename( cleanName );
 				const wxString subDirName = wxString::FromAscii( cleanName );
 				const wxString subDirPath = dirPath + L"/" + subDirName;
-				FlushDeletedFiles( it->subdir, newEntry->entry.data.cluster, newEntry->entry.data.length, subDirPath );
+				FlushDeletedFilesAndRemoveUnchangedDataFromCache( it->subdir, newEntry->entry.data.cluster, newEntry->entry.data.length, subDirPath );
+			} else if ( entry->IsFile() ) {
+				// still exists and is a file, see if we can remove unchanged data from m_cache
+				RemoveUnchangedDataFromCache( entry, newEntry );
 			}
 		}
+	}
+}
+
+void FolderMemoryCard::RemoveUnchangedDataFromCache( const MemoryCardFileEntry* const oldEntry, const MemoryCardFileEntry* const newEntry ) {
+	// Disclaimer: Technically, to actually prove that file data has not changed and still belongs to the same file, we'd need to keep a copy
+	// of the old FAT cluster chain and compare that as well, and only acknowledge the file as unchanged if none of those have changed. However,
+	// the chain of events that leads to a file having the exact same file contents as a deleted old file while also being placed in the same
+	// data clusters as the deleted file AND matching this condition here, in a quick enough succession that no flush has occurred yet since the
+	// deletion of that old file is incredibly unlikely, so I'm not sure if it's actually worth coding for.
+	if ( oldEntry->entry.data.timeModified != newEntry->entry.data.timeModified || oldEntry->entry.data.timeCreated != newEntry->entry.data.timeCreated
+	  || oldEntry->entry.data.length != newEntry->entry.data.length || oldEntry->entry.data.cluster != newEntry->entry.data.cluster ) {
+		return;
+	}
+
+	u32 cluster = newEntry->entry.data.cluster & NextDataClusterMask;
+	const u32 alloc_offset = m_superBlock.data.alloc_offset;
+	while ( cluster != LastDataCluster ) {
+		for ( int i = 0; i < 2; ++i ) {
+			const u32 page = ( cluster + alloc_offset ) * 2 + i;
+			auto newIt = m_cache.find( page );
+			if ( newIt == m_cache.end() ) { continue; }
+			auto oldIt = m_oldDataCache.find( page );
+			if ( oldIt == m_oldDataCache.end() ) { continue; }
+
+			if ( memcmp( &oldIt->second.raw[0], &newIt->second.raw[0], PageSize ) == 0 ) {
+				m_cache.erase( newIt );
+			}
+		}
+
+		cluster = m_fat.data[0][0][cluster] & NextDataClusterMask;
 	}
 }
 

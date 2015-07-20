@@ -237,11 +237,13 @@ u32 FolderMemoryCard::GetAmountFreeDataClusters() const {
 
 u32 FolderMemoryCard::GetLastClusterOfData( const u32 cluster ) const {
 	u32 entryCluster;
-	u32 nextCluster = cluster;
+	u32 nextCluster = cluster | DataClusterInUseMask;
+	bool nextClusterInUse = true;
 	do {
-		entryCluster = nextCluster;
-		nextCluster = m_fat.data[0][0][entryCluster] & NextDataClusterMask;
-	} while ( nextCluster != LastDataCluster );
+		entryCluster = nextCluster & NextDataClusterMask;
+		nextCluster = m_fat.data[0][0][entryCluster];
+		nextClusterInUse = ( nextCluster & DataClusterInUseMask ) == DataClusterInUseMask;
+	} while ( nextClusterInUse && nextCluster != ( LastDataCluster | DataClusterInUseMask ) );
 	return entryCluster;
 }
 
@@ -604,9 +606,9 @@ MemoryCardFileEntryCluster* FolderMemoryCard::GetFileEntryCluster( const u32 cur
 	}
 
 	// check other clusters of this directory
-	const u32 nextCluster = m_fat.data[0][0][currentCluster] & NextDataClusterMask;
-	if ( nextCluster != LastDataCluster ) {
-		MemoryCardFileEntryCluster* ptr = GetFileEntryCluster( nextCluster, searchCluster, fileCount - 2 );
+	const u32 nextCluster = m_fat.data[0][0][currentCluster];
+	if ( ( ( nextCluster & DataClusterInUseMask ) == DataClusterInUseMask ) && ( nextCluster != ( DataClusterInUseMask | LastDataCluster ) ) ) {
+		MemoryCardFileEntryCluster* ptr = GetFileEntryCluster( nextCluster & NextDataClusterMask, searchCluster, fileCount - 2 );
 		if ( ptr != nullptr ) { return ptr; }
 	}
 

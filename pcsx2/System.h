@@ -183,6 +183,14 @@ extern wxString SysGetDiscID();
 
 extern SysMainMemory& GetVmMemory();
 
+enum EmulatedSoftwareType {
+	Type_BIOS,
+	Type_Game,
+	Type_Homebrew,
+};
+
+extern EmulatedSoftwareType GetEmulatedSoftwareType();
+
 // --------------------------------------------------------------------------------------
 //  PCSX2_SEH - Defines existence of "built in" Structured Exception Handling support.
 // --------------------------------------------------------------------------------------

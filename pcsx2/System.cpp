@@ -658,3 +658,10 @@ wxString SysGetDiscID()
 
 	return pxsFmt( L"%08x", ElfCRC );
 }
+
+EmulatedSoftwareType GetEmulatedSoftwareType()
+{
+	if ( !DiscSerial.IsEmpty() ) return Type_Game;
+	if ( ElfCRC ) return Type_Homebrew;
+	return Type_BIOS;
+}

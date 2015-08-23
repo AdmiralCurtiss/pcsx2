@@ -87,8 +87,8 @@ struct _mcd
 		SysPlugins.McdNextFrame( port, slot );
 	}
 
-	void ReIndex(const wxString& filter = L"") {
-		SysPlugins.McdReIndex( port, slot, filter );
+	void ReIndex(uint sizeMB, bool allowFiltering, const wxString& filter) {
+		SysPlugins.McdReIndex( port, slot, sizeMB, allowFiltering, filter );
 	}
 };
 
@@ -129,4 +129,4 @@ extern void InitializeSIO(u8 value);
 extern void SetForceMcdEjectTimeoutNow();
 extern void ClearMcdEjectTimeoutNow();
 extern void sioNextFrame();
-extern void sioSetGameSerial(const wxString& serial);
+extern void sioSetFilterSettings(uint sizeMB = 8, bool allowFiltering = false, const wxString& serial = L"");

@@ -52,8 +52,8 @@ bool FolderMemoryCard::IsFormatted() const {
 	return m_superBlock.raw[0x16] == 0x6F;
 }
 
-void FolderMemoryCard::Open( const bool enableFiltering, const wxString& filter ) {
-	Open( g_Conf->FullpathToMcd( m_slot ), g_Conf->Mcd[m_slot], 0, enableFiltering, filter, false );
+void FolderMemoryCard::Open( const bool enableFiltering, const wxString& filter, const u32 sizeInClusters ) {
+	Open( g_Conf->FullpathToMcd( m_slot ), g_Conf->Mcd[m_slot], sizeInClusters, enableFiltering, filter, false );
 }
 
 void FolderMemoryCard::Open( const wxString& fullPath, const AppConfig::McdOptions& mcdOptions, const u32 sizeInClusters, const bool enableFiltering, const wxString& filter, bool simulateFileWrites ) {
@@ -1500,7 +1500,7 @@ FolderMemoryCardAggregator::FolderMemoryCardAggregator() {
 
 void FolderMemoryCardAggregator::Open() {
 	for ( int i = 0; i < TotalCardSlots; ++i ) {
-		m_cards[i].Open( m_enableFiltering, m_lastKnownFilter );
+		m_cards[i].Open( m_enableFiltering, m_lastKnownFilter, m_sizeInClusters );
 	}
 }
 
@@ -1546,11 +1546,12 @@ void FolderMemoryCardAggregator::NextFrame( uint slot ) {
 	m_cards[slot].NextFrame();
 }
 
-void FolderMemoryCardAggregator::ReIndex( uint slot, const bool enableFiltering, const wxString& filter ) {
+void FolderMemoryCardAggregator::ReIndex( uint slot, uint sizeInClusters, const bool enableFiltering, const wxString& filter ) {
 	m_cards[slot].Close();
-	m_cards[slot].Open( enableFiltering, filter );
+	m_cards[slot].Open( enableFiltering, filter, sizeInClusters );
 
 	SetFiltering( enableFiltering );
 	m_lastKnownFilter = filter;
+	m_sizeInClusters = sizeInClusters;
 }
 

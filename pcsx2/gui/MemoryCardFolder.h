@@ -316,7 +316,7 @@ public:
 	void Unlock();
 
 	// Initialize & Load Memory Card with values configured in the Memory Card Manager
-	void Open( const bool enableFiltering, const wxString& filter );
+	void Open( const bool enableFiltering, const wxString& filter, const u32 sizeInClusters = 0 );
 	// Initialize & Load Memory Card with provided custom values
 	void Open( const wxString& fullPath, const AppConfig::McdOptions& mcdOptions, const u32 sizeInClusters, const bool enableFiltering, const wxString& filter, bool simulateFileWrites = false );
 	// Close the memory card and flush changes to the file system. Set flush to false to not store changes.
@@ -523,6 +523,7 @@ protected:
 	// re-applied automatically when memory cards are reloaded
 	bool m_enableFiltering = true;
 	wxString m_lastKnownFilter = L"";
+	uint m_sizeInClusters = FolderMemoryCard::TotalClusters;
 
 public:
 	FolderMemoryCardAggregator();
@@ -541,5 +542,5 @@ public:
 	s32  EraseBlock( uint slot, u32 adr );
 	u64  GetCRC( uint slot );
 	void NextFrame( uint slot );
-	void ReIndex( uint slot, const bool enableFiltering, const wxString& filter );
+	void ReIndex( uint slot, uint sizeInClusters, const bool enableFiltering, const wxString& filter );
 };

@@ -385,10 +385,14 @@ void AppCoreThread::ApplySettings( const Pcsx2Config& src )
 		}
 	}
 
-	if (!gameMemCardFilter.IsEmpty()) {
-		sioSetGameSerial(gameMemCardFilter);
+	EmulatedSoftwareType softwareType = GetEmulatedSoftwareType();
+	//TODO: BIOS boot with valid CD/DVD in drive should also filter immediately to reduce memcard loading times
+	if (softwareType == Type_Game) {
+		// Games need filtered 8MB memory cards for compatibility
+		sioSetFilterSettings( 8, true, gameMemCardFilter.IsEmpty() ? curGameKey : gameMemCardFilter );
 	} else {
-		sioSetGameSerial(curGameKey);
+		// BIOS and Homebrew can handle bigger 64MB memory cards and shouldn't filter for save management reasons
+		sioSetFilterSettings( 64, false );
 	}
 
 	if (gameName.IsEmpty() && gameSerial.IsEmpty() && gameCRC.IsEmpty())

@@ -887,14 +887,18 @@ void sioNextFrame() {
 }
 
 // Used to figure out when a new game boots, so that memory cards can re-index themselves and only load data relevant to that game.
+uint SioCurrentMemoryCardSize = 8;
+bool SioCurrentAllowFiltering = false;
 wxString SioCurrentGameSerial = L"";
-void sioSetGameSerial( const wxString& serial ) {
-	if ( serial == SioCurrentGameSerial ) { return; }
+void sioSetFilterSettings( uint sizeMB, bool allowFiltering, const wxString& serial ) {
+	if ( sizeMB == SioCurrentMemoryCardSize && allowFiltering == SioCurrentAllowFiltering && serial == SioCurrentGameSerial ) { return; }
+	SioCurrentMemoryCardSize = sizeMB;
+	SioCurrentAllowFiltering = allowFiltering;
 	SioCurrentGameSerial = serial;
 
 	for ( uint port = 0; port < 2; ++port ) {
 		for ( uint slot = 0; slot < 4; ++slot ) {
-			mcds[port][slot].ReIndex( serial );
+			mcds[port][slot].ReIndex( sizeMB, allowFiltering, serial );
 		}
 	}
 	SetForceMcdEjectTimeoutNow();
